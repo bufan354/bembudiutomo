@@ -1,0 +1,29 @@
+# Kredensial & Konfigurasi
+.env
+config/config.php
+htdocs/.env
+
+# Database & Migrasi
+database/*.sql
+migrate-direct.php
+init-admin.php
+test-db.php
+
+# Logs & Cache
+logs/
+*.log
+.cache/
+
+# Uploads & User Data
+uploads/
+
+# OS & IDE Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.git/
+
+# Node & Composer
+node_modules/
+vendor/
