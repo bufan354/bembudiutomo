@@ -1,0 +1,137 @@
+<?php
+// admin/bulk-download.php
+require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/auth-check.php';
+
+// Load Dompdf
+require_once __DIR__ . '/../includes/dompdf/vendor/autoload.php';
+use Dompdf\Dompdf;
+use Dompdf\Options;
+
+// Pastikan sudah login
+if (!isLoggedIn()) {
+    die("Akses ditolak. Silakan login terlebih dahulu.");
+}
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_POST['ids'])) {
+    die("Tidak ada data yang dipilih.");
+}
+
+if (!csrfVerify()) {
+    die("Token keamanan tidak valid.");
+}
+
+set_time_limit(600); // Beri waktu lebih lama untuk proses PDF
+ini_set('memory_limit', '512M'); // Beri memori lebih besar
+
+// Sembunyikan deprecated warnings dari library pihak ketiga
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
+
+$selected_ids = $_POST['ids'];
+if (!is_array($selected_ids)) $selected_ids = [$selected_ids];
+
+$periode_id = getUserPeriode();
+$zipName = "Arsip_Surat_Massal_" . date('Ymd_His') . ".zip";
+$tempDir = sys_get_temp_dir() . '/bulk_' . uniqid();
+mkdir($tempDir, 0755, true);
+
+// Folder cache font
+$fontCacheDir = dirname(__DIR__) . '/uploads/fonts_cache';
+if (!is_dir($fontCacheDir)) @mkdir($fontCacheDir, 0777, true);
+
+// 1. Kumpulkan SEMUA ID yang relevan (termasuk anggota grup)
+$final_ids = [];
+foreach ($selected_ids as $id) {
+    $id = (int)$id;
+    $info = dbFetchOne("SELECT nomor_surat FROM arsip_surat WHERE id = ? AND periode_id = ?", [$id, $periode_id], "ii");
+    if ($info) {
+        $siblings = dbFetchAll("SELECT id FROM arsip_surat WHERE nomor_surat = ? AND periode_id = ?", [$info['nomor_surat'], $periode_id], "si");
+        foreach ($siblings as $s) {
+            $final_ids[] = (int)$s['id'];
+        }
+    }
+}
+$final_ids = array_unique($final_ids);
+
+$addedFiles = 0;
+
+// Inisialisasi Options Dompdf
+$options = new Options();
+$options->set('isHtml5ParserEnabled', true);
+$options->set('isRemoteEnabled', true);
+$options->set('fontDir', $fontCacheDir);
+$options->set('fontCache', $fontCacheDir);
+$options->set('tempDir', sys_get_temp_dir());
+$options->set('chroot', dirname(__DIR__)); 
+
+foreach ($final_ids as $id) {
+    $surat = dbFetchOne("SELECT * FROM arsip_surat WHERE id = ? AND periode_id = ?", [$id, $periode_id], "ii");
+    if (!$surat) continue;
+
+    $safeNomor = str_replace(['/', '\\'], '_', $surat['nomor_surat']);
+    $safeTujuan = substr(preg_replace('/[^a-zA-Z0-9]/', '_', $surat['tujuan']), 0, 30);
+    $fileName = $safeNomor . '_' . $safeTujuan . '.pdf';
+
+    // 1. Jika ada file fisik (Manual/Upload)
+    if (!empty($surat['file_surat'])) {
+        $filePath = UPLOAD_PATH . DIRECTORY_SEPARATOR . ltrim($surat['file_surat'], '/\\');
+        if (file_exists($filePath)) {
+            copy($filePath, $tempDir . '/' . $fileName);
+            $addedFiles++;
+        }
+    } 
+    // 2. Jika surat sistem (Otomatis)
+    else {
+        $_GET['id'] = $id;
+        $_GET['bulk'] = 1;
+        
+        ob_start();
+        try {
+            include __DIR__ . '/cetak-surat.php';
+            $html = ob_get_clean();
+            
+            if ($html) {
+                $dompdf = new Dompdf($options);
+                
+                // Pastikan path gambar absolut lokal
+                $html = str_replace('src="uploads/', 'src="' . dirname(__DIR__) . '/uploads/', $html);
+                
+                $dompdf->loadHtml($html);
+                $dompdf->setPaper('A4', 'portrait');
+                $dompdf->render();
+                
+                file_put_contents($tempDir . '/' . $fileName, $dompdf->output());
+                $addedFiles++;
+            }
+        } catch (Exception $e) {
+            ob_end_clean();
+            error_log("PDF Error (ID: $id): " . $e->getMessage());
+        }
+    }
+}
+
+if ($addedFiles > 0) {
+    $zipPath = sys_get_temp_dir() . '/' . $zipName;
+    $cmd = "cd " . escapeshellarg($tempDir) . " && zip -r " . escapeshellarg($zipPath) . " .";
+    exec($cmd);
+
+    if (file_exists($zipPath)) {
+        if (ob_get_level()) ob_end_clean();
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="' . $zipName . '"');
+        header('Content-Length: ' . filesize($zipPath));
+        readfile($zipPath);
+        @unlink($zipPath);
+    } else {
+        die("Gagal membuat ZIP.");
+    }
+} else {
+    die("Tidak ada file untuk didownload.");
+}
+
+// Cleanup
+$files = glob($tempDir . '/*');
+foreach($files as $file) { if(is_file($file)) @unlink($file); }
+@rmdir($tempDir);
+exit();

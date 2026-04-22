@@ -53,12 +53,25 @@ if (isset($_GET['hapus']) && is_numeric($_GET['hapus'])) {
             }
             
             if ($can_delete) {
-                if (!empty($surat_target['file_surat']) && $surat_target['jenis_surat'] === 'M') {
-                    $file_path = UPLOAD_PATH . '/' . $surat_target['file_surat'];
-                    if (file_exists($file_path)) unlink($file_path);
+                // 1. Hapus file utama (untuk manual/masuk)
+                if (!empty($surat_target['file_surat'])) {
+                    $file_path = UPLOAD_PATH . DIRECTORY_SEPARATOR . ltrim($surat_target['file_surat'], '/\\');
+                    if (file_exists($file_path)) @unlink($file_path);
                 }
+
+                // 2. Hapus lampiran-lampiran (untuk surat otomatis)
+                if (!empty($surat_target['konten_surat'])) {
+                    $konten = json_decode((string)$surat_target['konten_surat'], true);
+                    if (isset($konten['lampiran_files']) && is_array($konten['lampiran_files'])) {
+                        foreach ($konten['lampiran_files'] as $rel_path) {
+                            $lampiran_path = UPLOAD_PATH . DIRECTORY_SEPARATOR . ltrim($rel_path, '/\\');
+                            if (file_exists($lampiran_path)) @unlink($lampiran_path);
+                        }
+                    }
+                }
+
                 dbQuery("DELETE FROM arsip_surat WHERE id = ?", [$id_hapus], "i");
-                $success = "Surat terpilih berhasil dihapus secara permanen dari arsip.";
+                $success = "Arsip surat beserta seluruh file asetnya berhasil dihapus secara permanen.";
             }
         } else {
             $error = "Surat tidak ditemukan atau akses ditolak.";
@@ -99,7 +112,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     echo "<table border='1'>";
     echo "<tr><th colspan='5'>Arsip Surat Jenis: {$jenis}</th></tr>";
     echo "<tr><th>No</th><th>Tanggal</th><th>Nomor Surat</th><th>Perihal</th><th>Tujuan/Asal</th></tr>";
-    if (empty($surat_list)) {
+    if (empty($surat_list_raw)) {
         echo "<tr><td colspan='5'>Belum ada data arsip</td></tr>";
     } else {
         $no = 1;
@@ -136,6 +149,11 @@ $css = "
 .badge-count { background: #4A90E2; color: white; padding: 2px 6px; border-radius: 10px; font-size: 0.7rem; margin-left: 5px; vertical-align: middle; }
 .btn-copy { background: #673AB7; color: white; padding: 8px 12px; border-radius: 4px; text-decoration: none; font-size: 0.85rem; font-weight: bold; display: inline-flex; align-items: center; gap: 6px; border: none; cursor: pointer; transition: background 0.2s; }
 .btn-copy:hover { background: #5E35B1; }
+
+/* CSS untuk fitur bulk select */
+.bulk-checkbox-column { display: none; }
+.bulk-active .bulk-checkbox-column { display: table-cell; }
+.bulk-active .header-row th.bulk-checkbox-column { display: table-cell; }
 ";
 ?>
 <style><?php echo $css; ?></style>
@@ -176,39 +194,48 @@ $css = "
 <div class="card">
     <div class="card-body">
         
-        <div class="surat-actions" style="flex-wrap:wrap; gap:15px;">
-            <div class="tab-container" style="flex-wrap:wrap;">
+        <div class="surat-actions" style="flex-wrap:wrap; gap:15px; border-bottom: 1px solid #333; padding-bottom: 15px; margin-bottom: 15px;">
+            <div class="tab-container" style="flex-wrap:wrap; margin-bottom:0;">
                 <a href="arsip-surat.php?jenis=L" class="tab-btn <?php echo $jenis === 'L' ? 'active' : ''; ?>">Surat Keluar (Luar)</a>
                 <a href="arsip-surat.php?jenis=D" class="tab-btn <?php echo $jenis === 'D' ? 'active' : ''; ?>">Surat Dalam</a>
                 <a href="arsip-surat.php?jenis=M" class="tab-btn <?php echo $jenis === 'M' ? 'active' : ''; ?>">Surat Masuk (Luar)</a>
             </div>
             
-            <?php if ($jenis === 'M'): ?>
-                <div>
-                    <a href="arsip-surat.php?jenis=<?php echo $jenis; ?>&export=excel" class="btn-buat" style="background:#2E7D32;"><i class="fas fa-file-excel"></i> Export Excel</a>
-                    <a href="arsip-manual.php?type=M" class="btn-buat" style="background:#f39c12;"><i class="fas fa-file-import"></i> Catat Surat Masuk (Eksternal)</a>
-                </div>
-            <?php else: ?>
-                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <a href="arsip-surat.php?jenis=<?php echo $jenis; ?>&export=excel" class="btn-buat" style="background:#2E7D32;"><i class="fas fa-file-excel"></i> Export Excel</a>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;" id="bulk-action-area">
+                <!-- Tombol Utama yang Dinamis -->
+                <button type="button" id="btn-bulk-main" onclick="toggleBulkMode()" class="btn-buat" style="background:#6a1b9a; border:none; cursor:pointer; min-width: 180px;">
+                    <i class="fas fa-tasks"></i> <span id="text-bulk-main">Pilih Surat untuk ZIP</span>
+                </button>
+                
+                <button type="button" id="btn-bulk-cancel" onclick="cancelBulkMode()" class="btn-buat" style="background:#444; border:none; cursor:pointer; display:none;">
+                    <i class="fas fa-times"></i> Batal
+                </button>
+
+                <a href="arsip-surat.php?jenis=<?php echo $jenis; ?>&export=excel" class="btn-buat" style="background:#2E7D32;"><i class="fas fa-file-excel"></i> Export Excel</a>
+                
+                <?php if ($jenis === 'M'): ?>
+                    <a href="arsip-manual.php?type=M" class="btn-buat" style="background:#f39c12;"><i class="fas fa-file-import"></i> Catat Surat Masuk</a>
+                <?php else: ?>
                     <a href="buat-surat.php" class="btn-buat"><i class="fas fa-plus"></i> Buat Surat Otomatis</a>
-                    <a href="arsip-manual.php?type=<?php echo $jenis; ?>" class="btn-buat" style="background:#f39c12;"><i class="fas fa-file-import"></i> Arsipkan Surat Manual (<?php echo $jenis; ?>)</a>
-                </div>
-            <?php endif; ?>
+                <?php endif; ?>
+            </div>
         </div>
 
-        <div style="overflow-x:auto;">
-            <table class="admin-table">
-                <thead>
-                    <tr class="header-row">
-                        <th width="5%" style="text-align:center;">No</th>
-                        <th width="15%" style="text-align:center;">Tanggal <?php echo $jenis==='M' ? 'Diterima' : 'Dikirim'; ?></th>
-                        <th width="20%">Nomor Surat</th>
-                        <th width="20%">Perihal</th>
-                        <th width="25%"><?php echo $jenis==='M' ? 'Asal Instansi' : 'Dituju Kepada'; ?></th>
-                        <th width="15%" style="text-align:center;">Aksi</th>
-                    </tr>
-                </thead>
+        <div style="overflow-x:auto;" id="table-wrapper">
+            <form id="bulkForm" action="bulk-download.php" method="POST" target="_blank">
+                <?php echo csrfField(); ?>
+                <table class="admin-table">
+                    <thead>
+                        <tr class="header-row">
+                            <th width="4%" class="bulk-checkbox-column" style="text-align:center;"><input type="checkbox" id="selectAll" onclick="toggleSelectAll(this)" style="cursor:pointer; width:18px; height:18px;"></th>
+                            <th width="5%" style="text-align:center;">No</th>
+                            <th width="15%" style="text-align:center;">Tanggal <?php echo $jenis==='M' ? 'Diterima' : 'Dikirim'; ?></th>
+                            <th width="20%">Nomor Surat</th>
+                            <th width="20%">Perihal</th>
+                            <th width="25%"><?php echo $jenis==='M' ? 'Asal Instansi' : 'Dituju Kepada'; ?></th>
+                            <th width="15%" style="text-align:center;">Aksi</th>
+                        </tr>
+                    </thead>
                 <tbody>
                     <?php if (empty($grouped_surat)): ?>
                         <tr>
@@ -221,6 +248,7 @@ $css = "
                             $group_id = "group_" . md5($nomor_surat);
                         ?>
                         <tr class="<?php echo $has_children ? 'group-parent' : ''; ?>">
+                            <td class="bulk-checkbox-column" style="text-align:center;"><input type="checkbox" name="ids[]" value="<?php echo $parent['id']; ?>" class="row-checkbox" style="cursor:pointer; width:16px; height:16px;"></td>
                             <td style="text-align:center;"><?php echo $no++; ?></td>
                             <td style="text-align:center;"><?php echo htmlspecialchars((string)$parent['tanggal_dikirim']); ?></td>
                             <td>
@@ -246,8 +274,12 @@ $css = "
                                         <i class="fas fa-file-pdf"></i> Download Arsip
                                     </a>
                                 <?php elseif ($jenis !== 'M'): ?>
-                                    <a href="cetak-surat.php?id=<?php echo $parent['id']; ?>" target="_blank" style="font-size: 0.8rem; color: #8BB9F0; text-decoration: none; margin-top: 5px; display: inline-block;">
-                                        <i class="fas fa-print"></i> Lihat/Cetak
+                                    <?php 
+                                        $p_view_link = !empty($parent['file_surat']) ? uploadUrl($parent['file_surat']) : "cetak-surat.php?id={$parent['id']}";
+                                        $p_view_label = !empty($parent['file_surat']) ? "Lihat File" : "Lihat/Cetak";
+                                    ?>
+                                    <a href="<?php echo $p_view_link; ?>" target="_blank" style="font-size: 0.8rem; color: #8BB9F0; text-decoration: none; margin-top: 5px; display: inline-block;">
+                                        <i class="fas fa-file-pdf"></i> <?php echo $p_view_label; ?>
                                     </a>
                                 <?php endif; ?>
                             </td>
@@ -267,7 +299,7 @@ $css = "
                                 <a href="<?php echo $edit_link; ?>" class="btn-edit" style="margin-bottom:8px; width: 100%; justify-content: center;" title="Edit Surat"><i class="fas fa-edit"></i> Edit</a>
                                 <?php if ($jenis !== 'M'): ?>
                                     <?php 
-                                    $konten = json_decode($parent['konten_surat'], true) ?? [];
+                                    $konten = json_decode((string)$parent['konten_surat'], true) ?? [];
                                     $tujuan_first = trim(explode("\n", $parent['tujuan'])[0]);
                                     $copy_data = [
                                         'tujuan' => $parent['tujuan'],
@@ -304,13 +336,18 @@ $css = "
                         <?php if ($has_children): ?>
                             <?php foreach (array_slice($items, 1) as $child): ?>
                             <tr class="child-row <?php echo $group_id; ?>">
+                                <td class="bulk-checkbox-column" style="text-align:center;"><input type="checkbox" name="ids[]" value="<?php echo $child['id']; ?>" class="row-checkbox" style="cursor:pointer; width:16px; height:16px;"></td>
                                 <td style="text-align:center; color: #555;">└</td>
                                 <td style="text-align:center; color: #888; font-size: 0.85rem;"><?php echo htmlspecialchars((string)$child['tanggal_dikirim']); ?></td>
                                 <td style="padding-left: 30px;">
                                     <div class="child-indicator"></div>
                                     <span style="color: #888; font-size: 0.85rem;"><?php echo htmlspecialchars((string)$child['nomor_surat']); ?></span><br>
-                                    <a href="cetak-surat.php?id=<?php echo $child['id']; ?>" target="_blank" style="font-size: 0.75rem; color: #666; text-decoration: none; margin-top: 2px; display: inline-block;">
-                                        <i class="fas fa-print"></i> Lihat/Cetak
+                                    <?php 
+                                        $c_view_link = !empty($child['file_surat']) ? uploadUrl($child['file_surat']) : "cetak-surat.php?id={$child['id']}";
+                                        $c_view_label = !empty($child['file_surat']) ? "Lihat File" : "Lihat/Cetak";
+                                    ?>
+                                    <a href="<?php echo $c_view_link; ?>" target="_blank" style="font-size: 0.75rem; color: #666; text-decoration: none; margin-top: 2px; display: inline-block;">
+                                        <i class="fas fa-file-pdf"></i> <?php echo $c_view_label; ?>
                                     </a>
                                 </td>
                                 <td style="color: #888; font-size: 0.85rem;"><?php echo htmlspecialchars((string)$child['perihal']); ?></td>
@@ -326,7 +363,7 @@ $css = "
                                     
                                     <?php if ($jenis !== 'M'): ?>
                                         <?php 
-                                        $ckonten = json_decode($child['konten_surat'], true) ?? [];
+                                        $ckonten = json_decode((string)$child['konten_surat'], true) ?? [];
                                         $ctujuan_first = trim(explode("\n", $child['tujuan'])[0]);
                                         $ccopy_data = [
                                             'tujuan' => $child['tujuan'],
@@ -358,11 +395,70 @@ $css = "
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </tbody>
-            </table>
+                </table>
+            </form>
         </div>
-
     </div>
 </div>
+
+<script>
+let isBulkMode = false;
+
+function toggleBulkMode() {
+    const wrapper = document.getElementById('table-wrapper');
+    const mainBtn = document.getElementById('btn-bulk-main');
+    const cancelBtn = document.getElementById('btn-bulk-cancel');
+    const btnText = document.getElementById('text-bulk-main');
+
+    if (!isBulkMode) {
+        // AKTIFKAN MODE PILIH
+        isBulkMode = true;
+        wrapper.classList.add('bulk-active');
+        cancelBtn.style.display = 'inline-block';
+        btnText.innerText = 'Konfirmasi & Download (ZIP)';
+        mainBtn.style.background = '#27ae60'; // Hijau konfirmasi
+    } else {
+        // EKSEKUSI DOWNLOAD
+        const checkboxes = document.getElementsByClassName('row-checkbox');
+        let checkedCount = 0;
+        for (let i = 0; i < checkboxes.length; i++) {
+            if (checkboxes[i].checked) checkedCount++;
+        }
+        
+        if (checkedCount === 0) {
+            alert('Silakan pilih minimal satu surat untuk di-download.');
+            return;
+        }
+        
+        document.getElementById('bulkForm').submit();
+    }
+}
+
+function cancelBulkMode() {
+    isBulkMode = false;
+    const wrapper = document.getElementById('table-wrapper');
+    const mainBtn = document.getElementById('btn-bulk-main');
+    const cancelBtn = document.getElementById('btn-bulk-cancel');
+    const btnText = document.getElementById('text-bulk-main');
+    const selectAll = document.getElementById('selectAll');
+
+    wrapper.classList.remove('bulk-active');
+    cancelBtn.style.display = 'none';
+    btnText.innerText = 'Pilih Surat untuk ZIP';
+    mainBtn.style.background = '#6a1b9a'; // Kembali ke ungu
+    
+    // Uncheck all
+    if(selectAll) selectAll.checked = false;
+    toggleSelectAll({checked: false});
+}
+
+function toggleSelectAll(master) {
+    const checkboxes = document.getElementsByClassName('row-checkbox');
+    for (let i = 0; i < checkboxes.length; i++) {
+        checkboxes[i].checked = master.checked;
+    }
+}
+</script>
 
 <script>
 function toggleGroup(groupId, btn) {

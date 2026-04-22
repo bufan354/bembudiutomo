@@ -189,17 +189,20 @@ function uploadFile($file, $folder = 'umum') {
         }
     }
 
-    $imageInfo = @getimagesize($file['tmp_name']);
-    if ($imageInfo === false) {
-        $_SESSION['error'] = 'File bukan gambar yang valid.';
-        error_log("uploadFile: getimagesize gagal - bukan gambar valid");
-        return false;
-    }
+    // Hanya cek dimensi gambar jika file tersebut adalah gambar
+    if ($ext !== 'pdf') {
+        $imageInfo = @getimagesize($file['tmp_name']);
+        if ($imageInfo === false) {
+            $_SESSION['error'] = 'File bukan gambar yang valid.';
+            error_log("uploadFile: getimagesize gagal - bukan gambar valid");
+            return false;
+        }
 
-    if ($imageInfo[0] > 8000 || $imageInfo[1] > 8000) {
-        $_SESSION['error'] = 'Dimensi gambar terlalu besar. Maksimal 8000x8000 pixel.';
-        error_log("uploadFile: Dimensi terlalu besar - {$imageInfo[0]}x{$imageInfo[1]}");
-        return false;
+        if ($imageInfo[0] > 8000 || $imageInfo[1] > 8000) {
+            $_SESSION['error'] = 'Dimensi gambar terlalu besar. Maksimal 8000x8000 pixel.';
+            error_log("uploadFile: Dimensi gambar terlalu besar - {$imageInfo[0]}x{$imageInfo[1]}");
+            return false;
+        }
     }
 
     $newFilename = bin2hex(random_bytes(16)) . '.' . $ext;

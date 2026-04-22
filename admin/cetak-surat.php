@@ -21,14 +21,22 @@ $konten = json_decode($surat['konten_surat'], true) ?? [];
 $tujuan_html = nl2br(htmlspecialchars($surat['tujuan']));
 
 // Mengambil Ketua BEM yg aktif untuk fallback TTD bawah
-$ketua_bem = getKetua($periode_id);
+if (isset($BULK_KETUA)) {
+    $ketua_bem = $BULK_KETUA;
+} else {
+    $ketua_bem = getKetua($periode_id);
+}
 $nama_ketua_bem = $ketua_bem['nama_lengkap'] ?? 'DEDE ANGGI MUHYIDIN';
 
 // Ambil Pengaturan Tabel Tanda Tangan Tetap
-$db_pengaturan = dbFetchAll("SELECT kunci, nilai FROM pengaturan");
-$pengaturan = [];
-foreach($db_pengaturan as $p) {
-    if(trim($p['nilai']) !== '') $pengaturan[$p['kunci']] = $p['nilai'];
+if (isset($BULK_PENGATURAN)) {
+    $pengaturan = $BULK_PENGATURAN;
+} else {
+    $db_pengaturan = dbFetchAll("SELECT kunci, nilai FROM pengaturan");
+    $pengaturan = [];
+    foreach($db_pengaturan as $p) {
+        if(trim($p['nilai']) !== '') $pengaturan[$p['kunci']] = $p['nilai'];
+    }
 }
 
 ?>
@@ -43,6 +51,11 @@ foreach($db_pengaturan as $p) {
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: #525659; font-family: 'Times New Roman', Times, serif; font-size: 16px; color: #000; line-height: 1.5; }
         
+        <?php if (isset($_GET['bulk'])): ?>
+        body { background: white !important; }
+        .page { margin: 0 !important; border: none !important; box-shadow: none !important; width: 100% !important; padding: 0 !important; }
+        <?php endif; ?>
+
         .page {
             width: 210mm;
             min-height: 297mm;
@@ -184,11 +197,13 @@ foreach($db_pengaturan as $p) {
 </head>
 <body>
 
+    <?php if (!isset($_GET['bulk'])): ?>
     <div class="no-print">
         <button onclick="window.print()" class="btn"><i class="fas fa-print"></i> Cetak Dokumen</button>
         <button onclick="exportWord()" class="btn" style="background:#27ae60;"><i class="fas fa-file-word"></i> Download Word</button>
         <a href="arsip-surat.php" class="btn btn-warning"><i class="fas fa-arrow-left"></i> Kembali ke Arsip</a>
     </div>
+    <?php endif; ?>
 
     <div class="page">
         <!-- 1. KOP SURAT -->
