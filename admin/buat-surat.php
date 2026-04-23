@@ -22,8 +22,10 @@ $is_clone = false;
 $edit_data = [];
 
 // Defaults untuk Create Baru
-$kode_kegiatan = 'BEMCUP';
+$kode_kegiatan = '';
 $jenis_surat_val = 'L';
+$is_group = false;
+$group_count = 0;
 
 $target_id = $edit_id > 0 ? $edit_id : $clone_id;
 
@@ -32,18 +34,12 @@ if ($target_id > 0) {
     if ($existing) {
         if ($edit_id > 0) $is_edit = true;
         if ($clone_id > 0) $is_clone = true;
-        // Parse data
         $konten = json_decode($existing['konten_surat'], true) ?: [];
         $edit_data = array_merge($existing, $konten);
-        
-        // Extract nomor_urut and kode_kegiatan from nomor_surat
-        // Format: 012/L/BEMCUP/BEM/IV/2026
         $parts = explode('/', $existing['nomor_surat']);
         $edit_data['nomor_urut']    = $parts[0] ?? '';
         $jenis_surat_val            = $parts[1] ?? 'L';
-        $kode_kegiatan              = $parts[2] ?? 'BEMCUP';
-
-        // Cek apakah tergabung dalam grup (multi-recipient)
+        $kode_kegiatan              = $parts[2] ?? '';
         $group_count = dbFetchOne("SELECT COUNT(*) as total FROM arsip_surat WHERE nomor_surat = ? AND periode_id = ?", [$existing['nomor_surat'], $periode_id], "si")['total'];
         $is_group = $group_count > 1;
     } else {
@@ -51,9 +47,7 @@ if ($target_id > 0) {
     }
 }
 
-// Rekomendasi Nomor Urut per Jenis (Otomatis meneruskan nomor terbesar)
 function getLastSequence($jenis, $periode_id) {
-    global $conn;
     $last = dbFetchOne("SELECT nomor_surat FROM arsip_surat WHERE periode_id = ? AND jenis_surat = ? ORDER BY id DESC LIMIT 1", [$periode_id, $jenis], "is");
     if ($last && !empty($last['nomor_surat'])) {
         $parts = explode('/', $last['nomor_surat']);
@@ -64,23 +58,27 @@ function getLastSequence($jenis, $periode_id) {
 
 $count_L = getLastSequence('L', $periode_id);
 $count_D = getLastSequence('D', $periode_id);
-
 $next_L = str_pad($count_L + 1, 3, '0', STR_PAD_LEFT);
 $next_D = str_pad($count_D + 1, 3, '0', STR_PAD_LEFT);
-
 $next_urut_default = ($jenis_surat_val === 'D') ? $next_D : $next_L;
-
-if ($is_edit || $is_clone) {
-    $next_urut_default = $edit_data['nomor_urut'];
-}
+if ($is_edit || $is_clone) $next_urut_default = $edit_data['nomor_urut'];
 
 $bulan_romawi = getRomawiBulan(date('n'));
 $tahun = date('Y');
 
-// Ambil Template Tersimpan
+// Ambil data template & panitia
 $templates = dbFetchAll("SELECT * FROM surat_templates WHERE periode_id = ?", [$periode_id], "i");
-$list_perihal = array_filter($templates, fn($t) => $t['jenis'] === 'perihal');
-$list_tujuan  = array_filter($templates, fn($t) => $t['jenis'] === 'tujuan');
+$list_perihal  = array_filter($templates, fn($t) => $t['jenis'] === 'perihal');
+$list_tujuan   = array_filter($templates, fn($t) => $t['jenis'] === 'tujuan');
+$list_kegiatan = array_filter($templates, fn($t) => $t['jenis'] === 'kegiatan');
+$list_tempat   = array_filter($templates, fn($t) => $t['jenis'] === 'tempat');
+
+$list_panitia_all = dbFetchAll("SELECT * FROM panitia_tetap WHERE periode_id = ? ORDER BY nama ASC", [$periode_id], "i");
+$panitia_ketua_list = array_filter($list_panitia_all, fn($p) => $p['jabatan'] === 'ketua');
+$panitia_sekretaris_list = array_filter($list_panitia_all, fn($p) => $p['jabatan'] === 'sekretaris');
+
+// Ambil data lampiran internal (Peminjaman Barang)
+$lampiran_internal_list = dbFetchAll("SELECT id, nama_acara, tanggal_kegiatan, tahun FROM lampiran_pinjam WHERE periode_id = ? ORDER BY created_at DESC", [$periode_id], "i");
 
 // Proses Simpan / Update
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -89,48 +87,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $action_type   = $_POST['action_type'] ?? 'insert';
         $jenis_surat   = $_POST['jenis_surat'] === 'D' ? 'D' : 'L';
-        
-        // Dinamis formasi string nomor surat yang mengizinkan override baik saat edit maupun create
         $nomor_urut    = sanitizeText($_POST['nomor_urut'], 10);
-        $kode_keg      = strtoupper(sanitizeText($_POST['kode_kegiatan'], 50));
+        $kode_keg      = strtoupper(str_replace(' ', '', sanitizeText($_POST['kode_kegiatan'], 50)));
         $nomor_surat   = "{$nomor_urut}/{$jenis_surat}/{$kode_keg}/BEM/{$bulan_romawi}/{$tahun}";
-        
         $tanggal_dikirim_raw = sanitizeText($_POST['tanggal_dikirim'], 50);
         $tanggal_dikirim = (empty($tanggal_dikirim_raw) || $tanggal_dikirim_raw === 'Belum Di kirim') ? null : $tanggal_dikirim_raw;
-        
         $perihal        = sanitizeText($_POST['perihal'], 255);
         $tempat_tanggal = sanitizeText($_POST['tempat_tanggal'], 255);
         $tujuan         = strip_tags(trim($_POST['tujuan']));
         
-        // Data Spesifik Konten HTML (Json)
+        function saveSignatureToFile($base64String, $prefix = 'ttd') {
+            if (empty($base64String) || strpos($base64String, 'data:image') === false) return $base64String;
+            $dir = rtrim(UPLOAD_PATH, '/\\') . '/ttd/';
+            if (!is_dir($dir)) mkdir($dir, 0755, true);
+            $data = explode(',', $base64String);
+            $imgData = base64_decode($data[1]);
+            $filename = $prefix . '_' . uniqid() . '.png';
+            file_put_contents($dir . $filename, $imgData);
+            return 'ttd/' . $filename;
+        }
+
         $konten_data = [
             'sapaan_tujuan'           => sanitizeText($_POST['sapaan_tujuan'] ?? '', 50),
             'nama_kegiatan'           => sanitizeText($_POST['nama_kegiatan'] ?? '', 100),
             'tema'                    => sanitizeText($_POST['tema'] ?? '', 255),
-            'tema_kegiatan'           => strip_tags(trim($_POST['tema_kegiatan'] ?? '')), // custom override
+            'tema_kegiatan'           => strip_tags(trim($_POST['tema_kegiatan'] ?? '')),
             'pelaksanaan_hari_tanggal'=> sanitizeText($_POST['pelaksanaan_hari_tanggal'], 100),
             'pelaksanaan_waktu'       => sanitizeText($_POST['pelaksanaan_waktu'], 100),
             'pelaksanaan_tempat'      => sanitizeText($_POST['pelaksanaan_tempat'], 100),
             'konteks'                 => sanitizeText($_POST['konteks'] ?? '', 255),
             'panitia_ketua'           => strtoupper(sanitizeText($_POST['panitia_ketua'], 100)),
-            'panitia_ketua_ttd'       => $_POST['panitia_ketua_ttd'] ?? '',
+            'panitia_ketua_ttd'       => saveSignatureToFile($_POST['panitia_ketua_ttd'] ?? '', 'ketua'),
             'panitia_sekretaris'      => strtoupper(sanitizeText($_POST['panitia_sekretaris'], 100)),
-            'panitia_sekretaris_ttd'  => $_POST['panitia_sekretaris_ttd'] ?? '',
-            'use_ttd_warek'           => $_POST['use_ttd_warek'] ?? '1',
-            'use_ttd_presma'          => $_POST['use_ttd_presma'] ?? '1',
-            'use_cap_panitia'         => $_POST['use_cap_panitia'] ?? '1',
-            'use_cap_warek'           => $_POST['use_cap_warek'] ?? '1',
-            'use_cap_presma'          => $_POST['use_cap_presma'] ?? '1',
+            'panitia_sekretaris_ttd'  => saveSignatureToFile($_POST['panitia_sekretaris_ttd'] ?? '', 'sekretaris'),
+            'use_ttd_warek'           => isset($_POST['use_ttd_warek']) ? '1' : '0',
+            'use_ttd_presma'          => isset($_POST['use_ttd_presma']) ? '1' : '0',
+            'use_cap_panitia'         => isset($_POST['use_cap_panitia']) ? '1' : '0',
+            'use_cap_warek'           => isset($_POST['use_cap_warek']) ? '1' : '0',
+            'use_cap_presma'          => isset($_POST['use_cap_presma']) ? '1' : '0',
             'tembusan'                => strip_tags(trim($_POST['tembusan'] ?? ''))
         ];
 
-        // Maintance lampiran yang sudah ada saat edit
         $lampiran_files = [];
-        if ($is_edit && !empty($konten['lampiran_files'])) {
-            $lampiran_files = $konten['lampiran_files'];
+        if ($is_edit && !empty($konten['lampiran_files'])) $lampiran_files = $konten['lampiran_files'];
+        
+        // Handle deletions of existing files
+        if (isset($_POST['deleted_existing_files']) && !empty($_POST['deleted_existing_files'])) {
+            $to_delete = explode(',', $_POST['deleted_existing_files']);
+            $lampiran_files = array_filter($lampiran_files, function($file) use ($to_delete) {
+                return !in_array($file, $to_delete);
+            });
+            $lampiran_files = array_values($lampiran_files); // Reset index
         }
-
-        // Handle File Lampiran Uploads if any
+        
         if (isset($_FILES['lampiran_surat'])) {
             $upload_lampiran_dir = rtrim(UPLOAD_PATH, '/\\') . '/umum/lampiran/';
             if (!is_dir($upload_lampiran_dir)) mkdir($upload_lampiran_dir, 0755, true);
@@ -141,1256 +150,862 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($ext === 'pdf') {
                         $new_name = uniqid('lamp_', true) . '.pdf';
                         if (move_uploaded_file($tmp_name, $upload_lampiran_dir . $new_name)) {
-                            // save relative path compatible with uploadUrl() helper
                             $lampiran_files[] = 'umum/lampiran/' . $new_name;
                         }
                     }
                 }
             }
         }
-        $konten_data['lampiran_files'] = $lampiran_files;
-        
-        $konten_json = json_encode($konten_data);
-        $created_by  = $_SESSION['admin_id'];
 
-        try {
-            if ($action_type === 'update' && $is_edit) {
-                // Find all connected letters (including this one) based on OLD nomor_surat
-                $old_nomor_surat = $existing['nomor_surat'];
-                $connected = dbFetchAll("SELECT id, konten_surat, tujuan FROM arsip_surat WHERE nomor_surat = ? AND periode_id = ?", [$old_nomor_surat, $periode_id], "si");
-                
-                foreach ($connected as $conn_surat) {
-                    $conn_id = $conn_surat['id'];
-                    $conn_konten_old = json_decode($conn_surat['konten_surat'], true) ?: [];
-                    
-                    // Create a copy of the NEW shared konten_data
-                    $new_konten = $konten_data;
-                    
-                    if ($conn_id == $edit_id) {
-                        // For the currently edited letter, use the form's tujuan & sapaan
-                        $final_tujuan = $tujuan;
-                    } else {
-                        // For other connected letters, preserve their existing tujuan & sapaan
-                        $final_tujuan = $conn_surat['tujuan'];
-                        $new_konten['sapaan_tujuan'] = $conn_konten_old['sapaan_tujuan'] ?? '';
+        // --- HANDLER LAMPIRAN INTERNAL (JSON DATA) ---
+        $lampiran_internal_ids = $_POST['lampiran_internal'] ?? [];
+        $konten_data['lampiran_internal_ids'] = $lampiran_internal_ids;
+        $konten_data['lampiran_files'] = $lampiran_files;
+        $konten_json = json_encode($konten_data);
+        
+        if ($konten_json === false) {
+            $error = 'Gagal memproses data surat (JSON Error).';
+        } else {
+            $created_by = $_SESSION['admin_id'];
+            try {
+                if ($action_type === 'update' && $is_edit) {
+                    $old_nomor_surat = $existing['nomor_surat'];
+                    $connected = dbFetchAll("SELECT id, konten_surat, tujuan FROM arsip_surat WHERE nomor_surat = ? AND periode_id = ?", [$old_nomor_surat, $periode_id], "si");
+                    foreach ($connected as $conn_surat) {
+                        $conn_id = $conn_surat['id'];
+                        $conn_konten_old = json_decode($conn_surat['konten_surat'], true) ?: [];
+                        $new_konten = $konten_data;
+                        if ($conn_id == $edit_id) $final_tujuan = $tujuan;
+                        else {
+                            $final_tujuan = $conn_surat['tujuan'];
+                            $new_konten['sapaan_tujuan'] = $conn_konten_old['sapaan_tujuan'] ?? '';
+                        }
+                        $final_konten_json = json_encode($new_konten);
+                        dbQuery("UPDATE arsip_surat SET jenis_surat=?, tanggal_dikirim=?, nomor_surat=?, perihal=?, tujuan=?, tempat_tanggal=?, konten_surat=? WHERE id=? AND periode_id=?", [$jenis_surat, $tanggal_dikirim, $nomor_surat, $perihal, $final_tujuan, $tempat_tanggal, $final_konten_json, $conn_id, $periode_id], "sssssssii");
                     }
-                    
-                    $final_konten_json = json_encode($new_konten);
-                    
-                    dbQuery(
-                        "UPDATE arsip_surat SET jenis_surat=?, tanggal_dikirim=?, nomor_surat=?, perihal=?, tujuan=?, tempat_tanggal=?, konten_surat=? WHERE id=? AND periode_id=?",
-                        [$jenis_surat, $tanggal_dikirim, $nomor_surat, $perihal, $final_tujuan, $tempat_tanggal, $final_konten_json, $conn_id, $periode_id],
-                        "sssssssii"
-                    );
+                    auditLog('UPDATE', 'arsip_surat', $edit_id, 'Mengubah arsip surat: ' . $nomor_surat);
+                    redirect('admin/cetak-surat.php?id=' . $edit_id, 'Surat berhasil diperbarui!', 'success');
+                } else {
+                    dbQuery("INSERT INTO arsip_surat (periode_id, jenis_surat, tanggal_dikirim, nomor_surat, perihal, tujuan, tempat_tanggal, konten_surat, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [$periode_id, $jenis_surat, $tanggal_dikirim, $nomor_surat, $perihal, $tujuan, $tempat_tanggal, $konten_json, $created_by], "isssssssi");
+                    $new_id = dbLastId();
+                    auditLog('CREATE', 'arsip_surat', $new_id, 'Membuat surat baru: ' . $nomor_surat);
+                    redirect('admin/cetak-surat.php?id=' . $new_id, 'Surat berhasil dibuat!', 'success');
                 }
-                
-                $msg = count($connected) > 1 ? 'Arsip Surat dan ' . (count($connected)-1) . ' salinannya berhasil diperbarui!' : 'Arsip Surat berhasil diperbarui!';
-                auditLog('UPDATE', 'arsip_surat', $edit_id, 'Mengubah arsip surat' . (count($connected)>1 ? ' (beserta salinannya)' : '') . ': ' . $nomor_surat);
-                redirect('admin/cetak-surat.php?id=' . $edit_id, $msg . ' Membuka halaman cetak...', 'success');
-            } else {
-                dbQuery(
-                    "INSERT INTO arsip_surat (periode_id, jenis_surat, tanggal_dikirim, nomor_surat, perihal, tujuan, tempat_tanggal, konten_surat, created_by)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                     [$periode_id, $jenis_surat, $tanggal_dikirim, $nomor_surat, $perihal, $tujuan, $tempat_tanggal, $konten_json, $created_by],
-                     "isssssssi"
-                );
-                $new_id = dbLastId();
-                auditLog('CREATE', 'arsip_surat', $new_id, 'Membuat surat baru: ' . $nomor_surat);
-                redirect('admin/cetak-surat.php?id=' . $new_id, 'Surat berhasil dibuat! Membuka halaman cetak...', 'success');
+                exit();
+            } catch (Exception $e) {
+                $error = 'Terjadi kesalahan saat menyimpan ke database: ' . $e->getMessage();
             }
-            exit();
-        } catch (Exception $e) {
-            error_log("Gagal membuat/mengubah surat: " . $e->getMessage());
-            $error = 'Terjadi kesalahan sistem saat menyimpan data surat.';
         }
     }
 }
 
-// Data Helper Defaults (Apabila Bukan Edit)
+// Definisikan data default
 $def = [
     'sapaan_tujuan'            => '',
     'tanggal_dikirim'          => 'Belum Di kirim',
-    'perihal'                  => 'Permohonan Support Kegiatan',
+    'perihal'                  => '',
     'tempat_tanggal'           => 'Majalengka, ' . date('j F Y'),
-    'tujuan'                   => "Bapak Muhammad Iqbal, S.,S.T.\nKetua AFKAB Majalengka",
-    'nama_kegiatan'            => 'BEM CUP',
-    'tema'                     => 'Membangun Solidaritas dan Sportivitas Dalam Semangat Kebersamaan',
-    'tema_kegiatan'            => '', // kosong = mode template; diisi = mode custom
-    'pelaksanaan_hari_tanggal' => "Jum'at-Minggu, 17-19 Januari 2025",
-    'pelaksanaan_waktu'        => '08.00 s.d Selesai',
-    'pelaksanaan_tempat'       => 'Kampus INSTBUNAS Majalengka, GOR Futsal...',
+    'tujuan'                   => "",
+    'nama_kegiatan'            => '',
+    'tema'                     => '',
+    'tema_kegiatan'            => '',
+    'pelaksanaan_hari_tanggal' => "",
+    'pelaksanaan_waktu'        => '',
+    'pelaksanaan_tempat'       => '',
     'konteks'                  => '',
-    'panitia_ketua'            => 'ADE LIA AGUSTINA',
-    'panitia_sekretaris'       => 'ANGGI DIYARTI',
+    'panitia_ketua'            => '',
+    'panitia_sekretaris'       => '',
     'tembusan'                 => ''
 ];
 if ($is_edit || $is_clone) {
-    // Fill gaps
-    foreach($def as $k=>$v) {
-        if(!isset($edit_data[$k])) $edit_data[$k] = $v;
-    }
-    
-    // Clear specific fields if it's a clone
+    foreach($def as $k=>$v) if(!isset($edit_data[$k])) $edit_data[$k] = $v;
     if ($is_clone) {
         $edit_data['tujuan'] = '';
         $edit_data['sapaan_tujuan'] = '';
-        // If it's a clone, we also probably want to keep the lampiran intact or clear it? 
-        // We'll leave the arrays as is, the user can re-upload or keep the old ones.
     }
 } else {
     $edit_data = $def;
 }
-
 ?>
 
-<div class="page-header">
-    <h1><i class="fas fa-file-signature"></i> <?php echo $is_edit ? 'Edit Surat Arsip' : ($is_clone ? 'Duplikat Surat' : 'Buat Surat Otomatis'); ?></h1>
-    <p><?php echo $is_edit ? 'Memperbaiki isi detail surat yang sudah dibuat (Nomor Surat otomatis dikunci).' : ($is_clone ? 'Membuat salinan surat dengan nomor yang sama untuk tujuan penerima yang berbeda.' : 'Isi template formulir di bawah ini untuk menghasilkan surat PDF yang siap cetak.'); ?></p>
-</div>
+<style>
+:root {
+    --primary-gradient: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    --secondary-bg: #0f1217;
+    --accent-color: #4A90E2;
+    --card-bg: rgba(15, 18, 23, 0.95);
+    --input-bg: #0a0c10;
+    --border-color: #2a3545;
+    --text-muted: #aaa;
+    --text-main: #fff;
+    --shadow-premium: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
 
-<?php if ($error): ?>
-    <div class="alert alert-error"><i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($error); ?></div>
-<?php endif; ?>
+.buat-surat-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
 
-<form method="POST" class="card" enctype="multipart/form-data">
-    <?php echo csrfField(); ?>
-    <input type="hidden" name="action_type" value="<?php echo $is_edit ? 'update' : 'insert'; ?>">
+.buat-surat-container .page-header h1 {
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: var(--primary-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 30px;
+}
 
-    <div class="card-header">
-        <i class="fas <?php echo $is_edit ? 'fa-edit' : ($is_clone ? 'fa-copy' : 'fa-plus'); ?>"></i> <?php echo $is_edit ? 'Form Edit Surat #'.$edit_data['id'] : ($is_clone ? 'Form Duplikat Surat' : 'Form Template Surat Kegiatan'); ?>
+.buat-surat-container .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 24px;
+    margin-bottom: 24px;
+    overflow: hidden;
+    backdrop-filter: blur(10px);
+    box-shadow: var(--shadow-premium);
+    transition: transform 0.3s ease, border-color 0.3s ease;
+}
+
+.buat-surat-container .card:hover {
+    border-color: rgba(74, 144, 226, 0.4);
+}
+
+.buat-surat-container .card-header {
+    background: rgba(74, 144, 226, 0.05);
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: #8BB9F0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.buat-surat-container .card-body {
+    padding: 24px;
+}
+
+/* Form group & input */
+.buat-surat-container .form-group {
+    margin-bottom: 1.5rem;
+}
+
+.buat-surat-container label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.buat-surat-container input,
+.buat-surat-container select,
+.buat-surat-container textarea {
+    background: var(--input-bg);
+    border: 1.5px solid var(--border-color);
+    border-radius: 14px;
+    padding: 12px 16px;
+    color: var(--text-main);
+    width: 100%;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    font-size: 0.95rem;
+}
+
+.buat-surat-container input:focus,
+.buat-surat-container select:focus,
+.buat-surat-container textarea:focus {
+    border-color: var(--accent-color);
+    outline: none;
+    box-shadow: 0 0 0 4px rgba(74, 144, 226, 0.15), 0 0 20px rgba(74, 144, 226, 0.1);
+    transform: translateY(-1px);
+}
+
+/* Grid layout */
+.buat-surat-container .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+}
+
+@media (min-width: 768px) {
+    .buat-surat-container .grid-2 {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+/* Template Picker refinement */
+.buat-surat-container .tpl-picker {
+    position: relative;
+}
+
+.buat-surat-container .tpl-search-input {
+    padding-left: 44px !important;
+}
+
+.buat-surat-container .tpl-search-icon {
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--accent-color);
+    font-size: 1rem;
+    pointer-events: none;
+    z-index: 5;
+}
+
+.buat-surat-container .tpl-results {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    background: #121822;
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    max-height: 280px;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    animation: fadeInDown 0.2s ease-out;
+}
+
+@keyframes fadeInDown {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.buat-surat-container .tpl-item {
+    padding: 12px 18px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    transition: background 0.2s;
+}
+
+.buat-surat-container .tpl-item:last-child { border-bottom: none; }
+
+.buat-surat-container .tpl-item:hover {
+    background: rgba(74, 144, 226, 0.1);
+}
+
+.buat-surat-container .tpl-item-label {
+    font-weight: 700;
+    color: #8BB9F0;
+    font-size: 0.9rem;
+    margin-bottom: 2px;
+}
+
+.buat-surat-container .tpl-item-text {
+    font-size: 0.75rem;
+    color: #777;
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Switches */
+.buat-surat-container .switch-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(255, 255, 255, 0.02);
+    padding: 14px 20px;
+    border-radius: 16px;
+    border: 1px solid var(--border-color);
+    margin-bottom: 12px;
+    transition: all 0.3s;
+}
+
+.buat-surat-container .switch-container:hover {
+    background: rgba(74, 144, 226, 0.05);
+    border-color: rgba(74, 144, 226, 0.3);
+}
+
+.buat-surat-container .switch-label {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #ccc;
+    font-size: 0.88rem;
+    font-weight: 500;
+}
+
+.buat-surat-container .switch-label i {
+    color: var(--accent-color);
+    width: 20px;
+    text-align: center;
+}
+
+.buat-surat-container .switch {
+    position: relative;
+    display: inline-block;
+    width: 48px;
+    height: 24px;
+}
+
+.buat-surat-container .switch input { opacity: 0; width: 0; height: 0; }
+
+.buat-surat-container .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #2a2a2a;
+    transition: .4s;
+    border-radius: 24px;
+}
+
+.buat-surat-container .slider:before {
+    position: absolute;
+    content: "";
+    height: 18px; width: 18px;
+    left: 3px; bottom: 3px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.buat-surat-container input:checked + .slider { background: var(--primary-gradient); }
+.buat-surat-container input:checked + .slider:before { transform: translateX(24px); }
+
+/* Buttons */
+.buat-surat-container .btn-primary {
+    background: var(--primary-gradient);
+    border: none;
+    padding: 16px 32px;
+    border-radius: 50px;
+    font-weight: 700;
+    font-size: 1.1rem;
+    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    cursor: pointer;
+    color: white;
+    box-shadow: 0 10px 20px rgba(79, 172, 254, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.buat-surat-container .btn-primary:hover {
+    transform: translateY(-4px) scale(1.02);
+    box-shadow: 0 15px 30px rgba(79, 172, 254, 0.4);
+}
+
+.buat-surat-container .btn-outline {
+    background: transparent;
+    border: 1.5px solid var(--accent-color);
+    color: var(--accent-color);
+    padding: 8px 18px;
+    border-radius: 30px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.buat-surat-container .btn-outline:hover {
+    background: rgba(74, 144, 226, 0.1);
+    transform: translateY(-1px);
+}
+
+/* WAKTU PELAKSANAAN (PRESERVED) */
+.buat-surat-container .wakpel-grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+@media (min-width: 768px) { .buat-surat-container .wakpel-grid { grid-template-columns: 1fr 1fr; } }
+.buat-surat-container .wakpel-card { background: rgba(0,0,0,0.2); border-radius: 20px; padding: 20px; border: 1px solid var(--border-color); }
+.buat-surat-container .wakpel-card-label { font-size: 0.75rem; color: #5a8fc4; text-transform: uppercase; font-weight: 700; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }
+.buat-surat-container .date-range-wrap { display: flex; gap: 12px; align-items: center; }
+.buat-surat-container .preview-bar { background: rgba(74,144,226,0.08); border-radius: 12px; padding: 12px 16px; font-size: 0.85rem; margin-top: 15px; color: #8BB9F0; border-left: 4px solid var(--accent-color); }
+
+/* Drum Picker Refinement (Wheel Effect) */
+.drum-col { width: 58px; height: 168px; background: #080808; border-radius: 12px; overflow: hidden; position: relative; cursor: ns-resize; border: 1px solid #222; }
+.drum-inner { position: absolute; top: 0; left: 0; width: 100%; transition: transform 0.2s cubic-bezier(0.1, 0.7, 1.0, 0.1); will-change: transform; padding: 4px 0; }
+.drum-item { height: 40px; line-height: 40px; text-align: center; font-size: 1.1rem; color: #444; transition: all 0.2s; opacity: 0.3; filter: blur(1px); }
+.drum-item.sel { color: #fff; font-weight: 700; opacity: 1; transform: scale(1.1); filter: blur(0); }
+.drum-item.near1 { opacity: 0.6; filter: blur(0.5px); }
+.drum-item.near2 { opacity: 0.3; filter: blur(1px); }
+.drum-highlight { position: absolute; top: 64px; left: 4px; right: 4px; height: 40px; background: rgba(74, 144, 226, 0.15); border-radius: 8px; border: 1px solid rgba(74, 144, 226, 0.3); pointer-events: none; z-index: 5; }
+.drum-group { display: flex; align-items: center; gap: 8px; }
+.drum-arrow { background: #1a1a1a; border: 1px solid #333; color: #777; font-size: 0.8rem; cursor: pointer; padding: 4px 10px; border-radius: 8px; transition: all 0.2s; margin-top: 5px; }
+.drum-arrow:hover { background: #333; color: #fff; }
+.drum-time-label { font-size: 0.7rem; color: #555; text-transform: uppercase; margin-bottom: 8px; font-weight: 700; }
+.drum-groups-wrap { display: flex; gap: 20px; align-items: flex-start; margin-top: 15px; }
+.drum-colon { color: var(--accent-color); font-weight: 700; font-size: 1.2rem; padding-top: 80px; }
+
+/* Custom RTE */
+.buat-surat-container #rte-editor {
+    background: #080808;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 16px;
+    min-height: 120px;
+    color: #ddd;
+    outline: none;
+    transition: all 0.3s;
+}
+
+.buat-surat-container #rte-editor:focus {
+    border-color: var(--accent-color);
+}
+
+/* File Upload refinement */
+.buat-surat-container .drop-zone {
+    border: 2px dashed var(--border-color);
+    border-radius: 20px;
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    background: rgba(0,0,0,0.1);
+}
+
+.buat-surat-container .drop-zone:hover {
+    border-color: var(--accent-color);
+    background: rgba(74, 144, 226, 0.05);
+}
+
+.buat-surat-container .drop-zone i { font-size: 2.5rem; color: var(--accent-color); margin-bottom: 15px; }
+
+/* Signature refinement */
+.buat-surat-container canvas {
+    background: #fff;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    width: 100% !important;
+    height: auto !important;
+    max-width: 300px;
+    display: block;
+    margin: 0 auto;
+}
+
+/* Animations */
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.buat-surat-container .card {
+    animation: slideUp 0.5s ease-out forwards;
+}
+
+.buat-surat-container .card:nth-child(1) { animation-delay: 0.1s; }
+.buat-surat-container .card:nth-child(2) { animation-delay: 0.2s; }
+.buat-surat-container .card:nth-child(3) { animation-delay: 0.3s; }
+.buat-surat-container .card:nth-child(4) { animation-delay: 0.4s; }
+.buat-surat-container .card:nth-child(5) { animation-delay: 0.5s; }
+.buat-surat-container .card:nth-child(6) { animation-delay: 0.6s; }
+</style>
+
+<div class="buat-surat-container">
+    <div class="page-header">
+        <h1><i class="fas fa-file-signature"></i> <?php echo $is_edit ? 'Edit Surat' : ($is_clone ? 'Duplikat Surat' : 'Buat Surat Baru'); ?></h1>
     </div>
-    <div class="card-body">
-        
-        <h3 style="border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 20px; color:#4A90E2;">1. Meta Surat Resmi</h3>
-        
-        <?php if($is_group && $is_edit): ?>
-            <div style="background: rgba(74, 144, 226, 0.1); border: 1px solid #4A90E2; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
-                <strong style="color: #4A90E2;"><i class="fas fa-layer-group"></i> Info Grup Surat (Multi-Recipient)</strong><br>
-                Surat ini memiliki <strong><?php echo $group_count - 1; ?> salinan</strong> dengan nomor yang sama. 
-                <span style="color:#aaa;">Perubahan pada Nomor, Perihal, Tanggal, dan Isi Kegiatan akan otomatis memperbarui seluruh anggota grup ini.</span>
-            </div>
-        <?php endif; ?>
 
-        <?php if($is_edit): ?>
-            <div style="background: rgba(42, 53, 69, 0.5); border: 1px solid #3a4a5a; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
-                <strong style="color: #4A90E2;"><i class="fas fa-info-circle"></i> Info Mode Edit</strong><br>
-                Anda sedang mengubah detail atau penomoran untuk Surat #<?php echo htmlspecialchars($edit_data['id']); ?> secara retrospektif.
-            </div>
-        <?php elseif($is_clone): ?>
-            <div style="background: rgba(39, 174, 96, 0.15); border: 1px solid #27ae60; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
-                <strong style="color: #27ae60;"><i class="fas fa-copy"></i> Info Mode Duplikat</strong><br>
-                Anda sedang menambah penerima baru untuk nomor surat ini. Identitas grup (Nomor, Perihal, dan Tanggal) dikunci agar tetap sinkron. 
-                Silakan isi <strong>Sapaan</strong> dan <strong>Tujuan</strong> yang berbeda.
-            </div>
-        <?php endif; ?>
-        
-        <div style="display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap;">
-            <div class="form-group" style="flex:1; min-width:200px;">
-                <label>Nomor Urut (Misal: 012)</label>
-                <input type="text" id="nomor_urut_input" name="nomor_urut" class="form-control" value="<?php echo htmlspecialchars($next_urut_default); ?>" required onkeyup="updatePreview()" <?php echo $is_clone ? 'readonly style="background:rgba(255,255,255,0.05); color:#888;"' : ''; ?>>
-            </div>
-            <div class="form-group" style="flex:1; min-width:200px;">
-                <label>Jenis Surat</label>
-                <script>
-                    const nextL_val = "<?php echo $next_L; ?>";
-                    const nextD_val = "<?php echo $next_D; ?>";
-                    function gantiNomorUrut(sel) {
-                        <?php if(!$is_edit && !$is_clone): ?>
-                        document.getElementById('nomor_urut_input').value = (sel.value === 'L') ? nextL_val : nextD_val;
-                        <?php endif; ?>
-                        updatePreview();
-                    }
-                </script>
-                <select name="jenis_surat" id="jenis_surat_select" class="form-control" onchange="gantiNomorUrut(this)" required <?php echo $is_clone ? 'style="pointer-events:none; background:rgba(255,255,255,0.05); color:#888;"' : ''; ?>>
-                    <option value="L" <?php echo $jenis_surat_val === 'L' ? 'selected' : ''; ?>>Surat Keluar (L)</option>
-                    <option value="D" <?php echo $jenis_surat_val === 'D' ? 'selected' : ''; ?>>Surat Dalam (D)</option>
-                </select>
-                <?php if($is_clone): ?><input type="hidden" name="jenis_surat" value="<?php echo $jenis_surat_val; ?>"><?php endif; ?>
-            </div>
-            <div class="form-group" style="flex:1; min-width:200px;">
-                <label>Kode Kegiatan (Misal: BEMCUP)</label>
-                <input type="text" id="kode_kegiatan_input" name="kode_kegiatan" class="form-control" placeholder="BEMCUP" value="<?php echo htmlspecialchars($kode_kegiatan); ?>" required onkeyup="updatePreview()" <?php echo $is_clone ? 'readonly style="background:rgba(255,255,255,0.05); color:#888;"' : ''; ?>>
-            </div>
+    <?php if ($error): ?>
+        <div class="alert alert-error" style="background: rgba(231, 76, 60, 0.1); border: 1px solid #e74c3c; color: #ff6b6b; padding: 15px 20px; border-radius: 12px; margin-bottom: 25px; display: flex; align-items: center; gap: 12px;">
+            <i class="fas fa-exclamation-triangle"></i> <?php echo htmlspecialchars($error); ?>
         </div>
+    <?php endif; ?>
 
-        <div style="background: rgba(0,0,0,0.2); border: 1px solid #333; padding: 15px; border-radius: 6px; margin-bottom: 20px; font-family: monospace;">
-            <strong style="color: #aaa;">Preview Nomor Surat:</strong><br>
-            <span id="preview_nomor" style="color:#4A90E2; font-size: 1.1rem; font-weight: bold; margin-top: 8px; display: inline-block;">
-                <?php echo htmlspecialchars($next_urut_default); ?>/<?php echo htmlspecialchars($jenis_surat_val); ?>/<?php echo htmlspecialchars($kode_kegiatan); ?>/BEM/<?php echo $bulan_romawi; ?>/<?php echo $tahun; ?>
-            </span>
-        </div>
-        
-        <script>
-            function updatePreview() {
-                let urut = document.getElementById('nomor_urut_input').value || '[URUT]';
-                let jenis = document.getElementById('jenis_surat_select').value;
-                let kode = document.getElementById('kode_kegiatan_input').value || '[KODE]';
-                document.getElementById('preview_nomor').innerText = urut + '/' + jenis + '/' + kode + '/BEM/<?php echo $bulan_romawi; ?>/<?php echo $tahun; ?>';
-            }
-            document.addEventListener("DOMContentLoaded", updatePreview);
-            document.getElementById('nomor_urut_input').addEventListener('keyup', updatePreview);
-        </script>
+    <form method="POST" enctype="multipart/form-data">
+        <?php echo csrfField(); ?>
+        <input type="hidden" name="action_type" value="<?php echo $is_edit ? 'update' : 'insert'; ?>">
 
-        <div style="display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap;">
-            <div class="form-group" style="flex:1; min-width:300px;">
-                <label>Perihal Surat</label>
-                <?php if(!empty($list_perihal)): ?>
-                <div class="tpl-picker" id="picker-perihal">
-                    <div class="tpl-search-box">
-                        <i class="fas fa-search tpl-search-icon"></i>
-                        <input type="text" class="tpl-search-input" placeholder="Cari & Pilih Template Perihal..." onfocus="showTplResults('perihal')" onkeyup="filterTpl('perihal')">
+        <!-- CARD 1: IDENTITAS SURAT -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-fingerprint"></i> Identitas Surat</div>
+            <div class="card-body">
+                <?php if($is_group && $is_edit): ?>
+                    <div style="background: rgba(74, 144, 226, 0.1); border-left: 4px solid var(--accent-color); padding: 12px 18px; border-radius: 12px; margin-bottom: 24px; font-size: 0.9rem; color: #8BB9F0;">
+                        <i class="fas fa-info-circle"></i> <strong>Multi-Recipient Group</strong> — Mengedit surat ini akan memperbarui <strong><?php echo $group_count - 1; ?> salinan</strong> lainnya secara otomatis.
                     </div>
-                    <div class="tpl-results" id="results-perihal">
-                        <?php foreach($list_perihal as $p): ?>
-                        <div class="tpl-item" onclick="selectTpl('input_perihal', <?php echo htmlspecialchars(json_encode($p['isi_teks'])); ?>, 'perihal')">
-                            <span class="tpl-item-label"><?php echo htmlspecialchars($p['label']); ?></span>
-                            <span class="tpl-item-text"><?php echo htmlspecialchars($p['isi_teks']); ?></span>
+                <?php endif; ?>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Nomor Urut</label>
+                        <input type="text" id="nomor_urut_input" name="nomor_urut" value="<?php echo htmlspecialchars($next_urut_default); ?>" required <?php echo $is_clone ? 'readonly style="opacity:0.6;"' : ''; ?>>
+                    </div>
+                    <div class="form-group">
+                        <label>Jenis Surat</label>
+                        <select name="jenis_surat" id="jenis_surat_select" <?php echo $is_clone ? 'disabled' : ''; ?>>
+                            <option value="L" <?php echo $jenis_surat_val === 'L' ? 'selected' : ''; ?>>Surat Keluar (L)</option>
+                            <option value="D" <?php echo $jenis_surat_val === 'D' ? 'selected' : ''; ?>>Surat Dalam (D)</option>
+                        </select>
+                        <?php if($is_clone): ?><input type="hidden" name="jenis_surat" value="<?php echo $jenis_surat_val; ?>"><?php endif; ?>
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Kode Kegiatan</label>
+                        <div class="tpl-picker" id="picker-kegiatan">
+                            <i class="fas fa-search tpl-search-icon"></i>
+                            <input type="text" id="kode_kegiatan_input" name="kode_kegiatan" class="tpl-search-input" placeholder="Cari atau ketik kode..." value="<?php echo htmlspecialchars($kode_kegiatan); ?>" required <?php echo $is_clone ? 'readonly style="opacity:0.6;"' : ''; ?> onfocus="showTplResults('kegiatan')" onkeyup="filterTpl('kegiatan')">
+                            <div class="tpl-results" id="results-kegiatan">
+                                <?php foreach($list_kegiatan as $k): ?>
+                                <div class="tpl-item" onclick="selectKegiatan({nama:'<?php echo addslashes($k['label']); ?>', kode:'<?php echo addslashes($k['perihal_default']); ?>'})">
+                                    <div class="tpl-item-label"><?php echo htmlspecialchars($k['label']); ?></div>
+                                    <div class="tpl-item-text">Kode: <?php echo htmlspecialchars($k['perihal_default']); ?></div>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
                         </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Perihal Surat</label>
+                        <div class="tpl-picker" id="picker-perihal">
+                            <i class="fas fa-search tpl-search-icon"></i>
+                            <input type="text" id="input_perihal" name="perihal" class="tpl-search-input" placeholder="Cari atau ketik perihal..." value="<?php echo htmlspecialchars($edit_data['perihal']); ?>" required onfocus="showTplResults('perihal')" onkeyup="filterTpl('perihal')">
+                            <div class="tpl-results" id="results-perihal">
+                                <?php foreach($list_perihal as $p): ?>
+                                <div class="tpl-item" onclick="selectTpl('input_perihal', '<?php echo addslashes($p['isi_teks']); ?>', 'perihal')">
+                                    <div class="tpl-item-label"><?php echo htmlspecialchars($p['label']); ?></div>
+                                    <div class="tpl-item-text"><?php echo htmlspecialchars($p['isi_teks']); ?></div>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Titimangsa & Tempat Tanggal</label>
+                        <input type="text" name="tempat_tanggal" value="<?php echo htmlspecialchars($edit_data['tempat_tanggal']); ?>" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Tanggal Masuk Arsip (Opsional)</label>
+                        <input type="text" name="tanggal_dikirim" value="<?php echo htmlspecialchars($edit_data['tanggal_dikirim'] ?? 'Belum Di kirim'); ?>">
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Sapaan Tujuan</label>
+                        <select name="sapaan_tujuan">
+                            <option value="">-- Tanpa Sapaan --</option>
+                            <option value="Bapak" <?php echo ($edit_data['sapaan_tujuan']??'') === 'Bapak' ? 'selected' : ''; ?>>Bapak</option>
+                            <option value="Ibu" <?php echo ($edit_data['sapaan_tujuan']??'') === 'Ibu' ? 'selected' : ''; ?>>Ibu</option>
+                            <option value="Saudara" <?php echo ($edit_data['sapaan_tujuan']??'') === 'Saudara' ? 'selected' : ''; ?>>Saudara</option>
+                            <option value="Saudari" <?php echo ($edit_data['sapaan_tujuan']??'') === 'Saudari' ? 'selected' : ''; ?>>Saudari</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Kepada Yth (Tujuan)</label>
+                        <div class="tpl-picker" id="picker-tujuan">
+                            <i class="fas fa-search tpl-search-icon"></i>
+                            <input type="text" class="tpl-search-input" placeholder="Cari template tujuan..." onfocus="showTplResults('tujuan')" onkeyup="filterTpl('tujuan')">
+                            <div class="tpl-results" id="results-tujuan">
+                                <?php foreach($list_tujuan as $t): ?>
+                                <div class="tpl-item" onclick="selectTpl('textarea_tujuan', '<?php echo addslashes($t['isi_teks']); ?>', 'tujuan')">
+                                    <div class="tpl-item-label"><?php echo htmlspecialchars($t['label']); ?></div>
+                                    <div class="tpl-item-text"><?php echo htmlspecialchars($t['isi_teks']); ?></div>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <textarea id="textarea_tujuan" name="tujuan" rows="3" required placeholder="Detail penerima..."><?php echo htmlspecialchars($edit_data['tujuan']); ?></textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- CARD 2: PARAGRAF PEMBUKA -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-quote-left"></i> Paragraf Pembuka</div>
+            <div class="card-body">
+                <?php $mode_custom_default = !empty($edit_data['tema_kegiatan']) && empty($edit_data['nama_kegiatan']); ?>
+                <div style="display:flex; justify-content:flex-end; margin-bottom:20px;">
+                    <button type="button" id="toggle-mode-btn" onclick="toggleModeParagraf()" class="btn-outline"><?php echo $mode_custom_default ? 'Ganti ke Mode Template' : 'Ganti ke Mode Custom'; ?></button>
+                </div>
+                
+                <div id="blok-template" style="<?php echo $mode_custom_default ? 'display:none' : ''; ?>">
+                    <div class="grid-2">
+                        <div class="form-group"><label>Nama Kegiatan</label><input type="text" id="input_nama_kegiatan" name="nama_kegiatan" placeholder="Cth: LDKM 2026" value="<?php echo htmlspecialchars($edit_data['nama_kegiatan'] ?? ''); ?>"></div>
+                        <div class="form-group"><label>Tema Kegiatan</label><input type="text" id="input_tema" name="tema" placeholder="Cth: Bersinergi Membangun Bangsa" value="<?php echo htmlspecialchars($edit_data['tema'] ?? ''); ?>"></div>
+                    </div>
+                    <div class="preview-bar"><i class="fas fa-magic"></i> Sehubungan akan diadakannya kegiatan <strong>[Nama Kegiatan]</strong> dengan tema "<strong>[Tema]</strong>" yang akan dilaksanakan pada :</div>
+                </div>
+                
+                <div id="blok-custom" style="<?php echo $mode_custom_default ? '' : 'display:none'; ?>">
+                    <input type="hidden" id="input_tema_kegiatan_val" name="tema_kegiatan" value="<?php echo htmlspecialchars($edit_data['tema_kegiatan'] ?? ''); ?>">
+                    <div style="border: 1px solid var(--border-color); border-radius: 16px; overflow: hidden;">
+                        <div style="display:flex; gap:10px; padding:12px; background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border-color);">
+                            <button type="button" onclick="execRTE('bold')" class="btn-outline" style="width:40px; padding:6px;">B</button>
+                            <button type="button" onclick="execRTE('italic')" class="btn-outline" style="width:40px; padding:6px; font-style:italic;">I</button>
+                            <button type="button" onclick="execRTE('underline')" class="btn-outline" style="width:40px; padding:6px; text-decoration:underline;">U</button>
+                        </div>
+                        <div id="rte-editor" contenteditable="true"><?php echo $edit_data['tema_kegiatan'] ?? ''; ?></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CARD 3: WAKTU & TEMPAT PELAKSANAAN (UI PRESERVED) -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-calendar-alt"></i> Waktu & Tempat Pelaksanaan</div>
+            <div class="card-body">
+                <div class="wakpel-grid">
+                    <div class="wakpel-card">
+                        <div class="wakpel-card-label"><i class="fas fa-calendar-day"></i> Hari & Tanggal</div>
+                        <div class="date-range-wrap">
+                            <input type="date" id="tgl-mulai" onchange="formatTanggalRange()">
+                            <span style="color:var(--text-muted);">sampai</span>
+                            <input type="date" id="tgl-selesai" onchange="formatTanggalRange()">
+                        </div>
+                        <input type="hidden" id="out-tanggal" name="pelaksanaan_hari_tanggal" value="<?php echo htmlspecialchars($edit_data['pelaksanaan_hari_tanggal']); ?>">
+                        <div class="preview-bar" id="preview-tanggal"><?php echo htmlspecialchars($edit_data['pelaksanaan_hari_tanggal']); ?></div>
+                    </div>
+                    <div class="wakpel-card">
+                        <div class="wakpel-card-label"><i class="fas fa-clock"></i> Waktu Pelaksanaan</div>
+                        <input type="hidden" id="out-waktu" name="pelaksanaan_waktu" value="<?php echo htmlspecialchars($edit_data['pelaksanaan_waktu']); ?>">
+                        <div class="drum-groups-wrap">
+                            <div>
+                                <div class="drum-time-label">Mulai</div>
+                                <div class="drum-group">
+                                    <div><div class="drum-col" id="drum-h-start"></div><button type="button" class="drum-arrow" onclick="drumHS.scrollBy(1)">▼</button></div>
+                                    <span class="drum-colon">:</span>
+                                    <div><div class="drum-col" id="drum-m-start"></div><button type="button" class="drum-arrow" onclick="drumMS.scrollBy(1)">▼</button></div>
+                                </div>
+                            </div>
+                            <div style="padding-top:24px; color:var(--text-muted); font-size:0.8rem;">s.d</div>
+                            <div id="drum-end-wrap">
+                                <div class="drum-time-label">Selesai</div>
+                                <div class="drum-group">
+                                    <div><div class="drum-col" id="drum-h-end"></div><button type="button" class="drum-arrow" onclick="drumHE.scrollBy(1)">▼</button></div>
+                                    <span class="drum-colon">:</span>
+                                    <div><div class="drum-col" id="drum-m-end"></div><button type="button" class="drum-arrow" onclick="drumME.scrollBy(1)">▼</button></div>
+                                </div>
+                            </div>
+                            <div style="padding-top:24px;">
+                                <div class="toggle-switch-wrap" id="toggle-selesai-wrap" onclick="doToggleSelesai()" style="background: rgba(255,255,255,0.05); padding: 10px 14px; border-radius: 12px; border: 1px solid var(--border-color); cursor: pointer; display: flex; align-items: center; gap: 10px;">
+                                    <div class="toggle-switch" id="ts-switch" style="position:relative; width:36px; height:20px; background:#222; border-radius:10px; transition: .3s;"><div class="toggle-knob" style="position:absolute; top:2px; left:2px; width:16px; height:16px; background:#fff; border-radius:50%; transition:.3s;"></div></div>
+                                    <span class="toggle-label" id="ts-label" style="font-size:0.75rem; color:#888;">Tanpa waktu akhir</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="preview-bar" id="preview-waktu"><?php echo htmlspecialchars($edit_data['pelaksanaan_waktu']); ?></div>
+                    </div>
+                </div>
+                
+                <div class="grid-2" style="margin-top:24px;">
+                    <div class="form-group">
+                        <label>Tempat Pelaksanaan</label>
+                        <div class="tpl-picker" id="picker-tempat">
+                            <i class="fas fa-search tpl-search-icon"></i>
+                            <input type="text" id="input_tempat" name="pelaksanaan_tempat" class="tpl-search-input" placeholder="Cari atau ketik tempat..." value="<?php echo htmlspecialchars($edit_data['pelaksanaan_tempat']); ?>" required onfocus="showTplResults('tempat')" onkeyup="filterTpl('tempat')">
+                            <div class="tpl-results" id="results-tempat">
+                                <?php foreach($list_tempat as $t): ?>
+                                <div class="tpl-item" onclick="selectTpl('input_tempat', '<?php echo addslashes($t['label']); ?>', 'tempat')">
+                                    <div class="tpl-item-label"><?php echo htmlspecialchars($t['label']); ?></div>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group"><label>Konteks Tambahan (Kalimat Akhir)</label><input type="text" name="konteks" placeholder="Cth: sebagai perwakilan delegasi" value="<?php echo htmlspecialchars($edit_data['konteks'] ?? ''); ?>"></div>
+                </div>
+                <div class="form-group"><label>Tembusan (Opsional)</label><textarea name="tembusan" rows="2" placeholder="1. Arsip..."><?php echo htmlspecialchars($edit_data['tembusan'] ?? ''); ?></textarea></div>
+            </div>
+        </div>
+
+        <!-- CARD 4: LAMPIRAN BERKAS -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-paperclip"></i> Lampiran Berkas (Pustaka & Upload)</div>
+            <div class="card-body">
+                
+                <!-- PILIH DARI DATA INTERNAL (Draft Peminjaman) -->
+                <?php if (!empty($lampiran_internal_list)): ?>
+                <div style="margin-bottom:25px; padding-bottom:15px; border-bottom:1px solid var(--border-color);">
+                    <div style="font-size: 0.85rem; color: var(--accent-color); margin-bottom: 12px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">Pilih Dari Arsip Peminjaman:</div>
+                    <div style="max-height: 200px; overflow-y: auto; display: grid; grid-template-columns: 1fr; gap: 8px;">
+                        <?php foreach($lampiran_internal_list as $li): 
+                            $isSelected = in_array($li['id'], ($konten['lampiran_internal_ids'] ?? []));
+                        ?>
+                        <label style="display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.03); padding: 12px; border-radius: 12px; cursor: pointer; transition: 0.3s; border: 1px solid transparent;" onmouseover="this.style.borderColor='var(--accent-color)'" onmouseout="this.style.borderColor='transparent'">
+                            <input type="checkbox" name="lampiran_internal[]" value="<?php echo $li['id']; ?>" <?php echo $isSelected ? 'checked' : ''; ?> style="width:18px; height:18px; accent-color: var(--accent-color);">
+                            <div style="flex-grow:1;">
+                                <div style="font-weight: 600; font-size: 0.95rem;"><?php echo htmlspecialchars($li['nama_acara']); ?></div>
+                                <div style="font-size: 0.75rem; color: #888;"><?php echo htmlspecialchars($li['tanggal_kegiatan']); ?> <?php echo htmlspecialchars($li['tahun']); ?></div>
+                            </div>
+                            <i class="fas fa-database" style="color: #555;"></i>
+                        </label>
                         <?php endforeach; ?>
                     </div>
                 </div>
                 <?php endif; ?>
-                <input type="text" id="input_perihal" name="perihal" class="form-control" placeholder="Permohonan Support Kegiatan" value="<?php echo htmlspecialchars($edit_data['perihal']); ?>" required <?php echo $is_clone ? 'readonly style="background:rgba(255,255,255,0.05); color:#888;"' : ''; ?>>
-            </div>
-            <div class="form-group" style="flex:1; min-width:300px;">
-                <label>Titimangsa & Tempat Tanggal Surat</label>
-                <input type="text" name="tempat_tanggal" class="form-control" value="<?php echo htmlspecialchars($edit_data['tempat_tanggal']); ?>" <?php echo empty($list_perihal) ? 'style="margin-top:0px;"' : 'style="margin-top:42px;"'; ?> required <?php echo $is_clone ? 'readonly style="background:rgba(255,255,255,0.05); color:#888;"' : ''; ?>>
-            </div>
-        </div>
-        
-        <div class="form-group">
-            <label>Status Tabel Arsip (Tanggal Kirim)</label>
-            <input type="text" name="tanggal_dikirim" class="form-control" value="<?php echo htmlspecialchars((string)($edit_data['tanggal_dikirim'] ?? 'Belum Di kirim')); ?>" placeholder="Bisa dikosongkan atau diisi 'Belum Di kirim'" <?php echo $is_clone ? 'readonly style="background:rgba(255,255,255,0.05); color:#888;"' : ''; ?>>
-        </div>
 
-        <h3 style="border-bottom: 1px solid #333; padding-bottom: 10px; margin: 30px 0 20px; color:#4A90E2;">2. Tujuan & Isi Surat</h3>
-        
-        <div class="form-group" style="max-width:300px;">
-            <label>Sapaan Tujuan (Opsional)</label>
-            <select name="sapaan_tujuan" class="form-control">
-                <option value="">-- Tanpa Sapaan --</option>
-                <option value="Bapak" <?php echo ($edit_data['sapaan_tujuan'] ?? '') === 'Bapak' ? 'selected' : ''; ?>>Bapak</option>
-                <option value="Ibu" <?php echo ($edit_data['sapaan_tujuan'] ?? '') === 'Ibu' ? 'selected' : ''; ?>>Ibu</option>
-                <option value="Saudara" <?php echo ($edit_data['sapaan_tujuan'] ?? '') === 'Saudara' ? 'selected' : ''; ?>>Saudara</option>
-                <option value="Saudari" <?php echo ($edit_data['sapaan_tujuan'] ?? '') === 'Saudari' ? 'selected' : ''; ?>>Saudari</option>
-            </select>
-        </div>
-
-        <div class="form-group">
-            <label>Kepada Yth (Tujuan)</label>
-            <?php if(!empty($list_tujuan)): ?>
-            <div class="tpl-picker" id="picker-tujuan">
-                <div class="tpl-search-box">
-                    <i class="fas fa-search tpl-search-icon"></i>
-                    <input type="text" class="tpl-search-input" placeholder="Cari & Pilih Template Tujuan..." onfocus="showTplResults('tujuan')" onkeyup="filterTpl('tujuan')">
+                <div style="font-size: 0.85rem; color: var(--accent-color); margin-bottom: 12px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">Upload PDF Baru:</div>
+                <div class="drop-zone" id="lampiran_drop_zone">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                    <p style="font-weight:600; color:#eee;">Klik atau seret file PDF ke sini</p>
+                    <p style="font-size:0.75rem; color:var(--text-muted);">Dapat memilih beberapa file sekaligus</p>
+                    <input type="file" name="lampiran_surat[]" id="lampiran_upload" accept=".pdf" multiple style="display:none;">
                 </div>
-                <div class="tpl-results" id="results-tujuan">
-                    <?php foreach($list_tujuan as $t): ?>
-                    <div class="tpl-item" onclick="selectTpl('textarea_tujuan', <?php echo htmlspecialchars(json_encode($t['isi_teks'])); ?>, 'tujuan')">
-                        <span class="tpl-item-label"><?php echo htmlspecialchars($t['label']); ?></span>
-                        <span class="tpl-item-text"><?php echo htmlspecialchars($t['isi_teks']); ?></span>
-                    </div>
-                    <?php endforeach; ?>
-                </div>
-            </div>
-            <?php endif; ?>
-            <textarea id="textarea_tujuan" name="tujuan" class="form-control" rows="4" oninput="syncParagraf()" required><?php echo htmlspecialchars($edit_data['tujuan']); ?></textarea>
-            <small style="color:#aaa;">Isi nama &amp; jabatan penerima saja. Teks "Di Tempat" akan otomatis ditambahkan di cetakan surat.</small>
-        </div>
-        
-        <script>
-        // ======================================================
-        // Tidak ada paragraf field — keduanya dibuat dinamis
-        // ======================================================
-        </script>
-        
-        <?php
-        // Deteksi mode edit: jika tema_kegiatan ada tapi nama_kegiatan kosong → mode custom
-        $mode_custom_default = !empty($edit_data['tema_kegiatan']) && empty($edit_data['nama_kegiatan']);
-        $tpl_hidden  = $mode_custom_default ? 'display:none' : '';
-        $cust_hidden = $mode_custom_default ? '' : 'display:none';
-        ?>
+                
+                <!-- Hidden input untuk melacak file lama yang dihapus -->
+                <input type="hidden" name="deleted_existing_files" id="deleted_existing_files" value="">
 
-        <div style="margin-bottom: 15px; padding: 18px; background: rgba(0,0,0,0.25); border-radius: 10px; border: 1px solid #2a2a2a;">
+                <div id="file-list-preview" style="margin-top:10px;"></div>
 
-            <!-- Header bar -->
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                <div>
-                    <strong style="color:#4A90E2; font-size:0.95rem;"><i class="fas fa-paragraph"></i> Paragraf Pembuka</strong>
-                    <span id="mode-badge-template" style="<?php echo $mode_custom_default ? 'display:none' : ''; ?> margin-left:8px; font-size:0.72rem; background:rgba(74,144,226,0.15); color:#4A90E2; border:1px solid rgba(74,144,226,0.3); padding:2px 8px; border-radius:20px;">Mode Template</span>
-                    <span id="mode-badge-custom"   style="<?php echo $mode_custom_default ? '' : 'display:none'; ?> margin-left:8px; font-size:0.72rem; background:rgba(255,165,0,0.15); color:#ffa500; border:1px solid rgba(255,165,0,0.3); padding:2px 8px; border-radius:20px;">Mode Custom</span>
-                </div>
-                <button type="button" id="toggle-mode-btn" onclick="toggleModeParagraf()"
-                        style="display:inline-flex; align-items:center; gap:6px; padding:6px 14px; border-radius:6px; border:1px solid #444; background:rgba(255,255,255,0.06); color:#ccc; font-size:0.8rem; cursor:pointer; transition: all 0.2s;"
-                        onmouseover="this.style.background='rgba(255,255,255,0.12)'; this.style.color='#fff';"
-                        onmouseout="this.style.background='rgba(255,255,255,0.06)'; this.style.color='#ccc';">
-                    <i class="fas fa-exchange-alt"></i>
-                    <span id="toggle-mode-label"><?php echo $mode_custom_default ? 'Ganti ke Mode Template' : 'Ganti ke Mode Custom'; ?></span>
-                </button>
-            </div>
-
-            <!-- MODE TEMPLATE (default) -->
-            <div id="blok-template" style="<?php echo $tpl_hidden; ?>">
-                <div style="display:flex; gap:15px; flex-wrap:wrap;">
-                    <div class="form-group" style="flex:1; min-width:180px; margin-bottom:0;">
-                        <label>Nama Kegiatan</label>
-                        <input type="text" id="input_nama_kegiatan" name="nama_kegiatan" class="form-control"
-                               placeholder="BEM CUP" value="<?php echo htmlspecialchars($edit_data['nama_kegiatan'] ?? ''); ?>">
-                    </div>
-                    <div class="form-group" style="flex:2; min-width:260px; margin-bottom:0;">
-                        <label>Tema Kegiatan</label>
-                        <input type="text" id="input_tema" name="tema" class="form-control"
-                               placeholder="Membangun Solidaritas dan Sportivitas..."
-                               value="<?php echo htmlspecialchars($edit_data['tema'] ?? ''); ?>">
-                    </div>
-                </div>
-                <!-- Removed hidden_tema_kegiatan overlapping element -->
-                <div style="margin-top:10px; padding:10px; background:rgba(74,144,226,0.06); border-radius:6px; border-left:3px solid rgba(74,144,226,0.4);">
-                    <small style="color:#666;">Preview hasil cetakan:</small><br>
-                    <small style="color:#8BB9F0; font-style:italic;">
-                        "Sehubungan akan diadakannya kegiatan <strong>[Nama Kegiatan]</strong> Tahun <?php echo date('Y'); ?>
-                        dengan tema "<strong>[Tema]</strong>" yang akan dilaksanakan pada :"
-                    </small>
-                </div>
-            </div>
-
-            <!-- MODE CUSTOM (opsional) — rich text editor -->
-            <div id="blok-custom" style="<?php echo $cust_hidden; ?>">
-                <!-- Removed hidden_nama_kegiatan and hidden_tema overlapping elements -->
-                <input type="hidden" id="input_tema_kegiatan_val" name="tema_kegiatan" value="<?php echo htmlspecialchars($edit_data['tema_kegiatan'] ?? ''); ?>">
-
-                <!-- Toolbar -->
-                <div style="display:flex; gap:4px; padding:6px 8px; background:#1a1a1a; border:1px solid #333; border-bottom:none; border-radius:6px 6px 0 0;">
-                    <button type="button" onclick="execRTE('bold')"
-                            title="Bold" style="width:30px; height:28px; border-radius:4px; border:1px solid #333; background:#222; color:#ccc; cursor:pointer; font-weight:bold; font-size:0.85rem; transition:background 0.15s;"
-                            onmouseover="this.style.background='#333'" onmouseout="this.style.background='#222'">B</button>
-                    <button type="button" onclick="execRTE('italic')"
-                            title="Italic" style="width:30px; height:28px; border-radius:4px; border:1px solid #333; background:#222; color:#ccc; cursor:pointer; font-style:italic; font-size:0.85rem; transition:background 0.15s;"
-                            onmouseover="this.style.background='#333'" onmouseout="this.style.background='#222'">I</button>
-                    <button type="button" onclick="execRTE('underline')"
-                            title="Underline" style="width:30px; height:28px; border-radius:4px; border:1px solid #333; background:#222; color:#ccc; cursor:pointer; text-decoration:underline; font-size:0.85rem; transition:background 0.15s;"
-                            onmouseover="this.style.background='#333'" onmouseout="this.style.background='#222'">U</button>
-                    <div style="width:1px; background:#333; margin:4px 4px;"></div>
-                    <span style="font-size:0.72rem; color:#555; align-self:center; margin-left:4px;">Pilih teks lalu klik format</span>
-                </div>
-
-                <!-- Editable area -->
-                <div id="rte-editor"
-                     contenteditable="true"
-                     style="min-height:90px; padding:12px 14px; background:#111; border:1px solid #333; border-radius:0 0 6px 6px; color:#ddd; font-size:0.88rem; line-height:1.7; outline:none; white-space:pre-wrap;"
-                     onfocus="this.style.borderColor='#4A90E2'"
-                     onblur="this.style.borderColor='#333'; syncRTE()"><?php echo $edit_data['tema_kegiatan'] ?? ''; ?></div>
-                <small style="color:#555; margin-top:5px; display:block;"><i class="fas fa-info-circle"></i> Teks ini akan tampil di surat sebagai paragraf pembuka.</small>
-            </div>
-        </div>
-
-        <script>
-        // ============================================================
-        // Toggle Mode Template / Custom
-        // ============================================================
-        function toggleModeParagraf() {
-            const blokTpl   = document.getElementById('blok-template');
-            const blokCust  = document.getElementById('blok-custom');
-            const label     = document.getElementById('toggle-mode-label');
-            const badgeTpl  = document.getElementById('mode-badge-template');
-            const badgeCust = document.getElementById('mode-badge-custom');
-            const isCustom  = blokCust.style.display !== 'none';
-
-            if (isCustom) {
-                blokTpl.style.display  = '';
-                blokCust.style.display = 'none';
-                label.textContent      = 'Ganti ke Mode Custom';
-                badgeTpl.style.display = '';
-                badgeCust.style.display= 'none';
-                // Kosongkan custom
-                document.getElementById('rte-editor').innerHTML = '';
-                document.getElementById('input_tema_kegiatan_val').value = '';
-                // (Hidden overrides dihapus)
-            } else {
-                blokTpl.style.display  = 'none';
-                blokCust.style.display = '';
-                label.textContent      = 'Ganti ke Mode Template';
-                badgeTpl.style.display = 'none';
-                badgeCust.style.display= '';
-                // Kosongkan template
-                document.getElementById('input_nama_kegiatan').value = '';
-                document.getElementById('input_tema').value = '';
-                // (Hidden override dihapus)
-                document.getElementById('rte-editor').focus();
-            }
-        }
-
-        // ============================================================
-        // Rich Text Editor helpers
-        // ============================================================
-        function execRTE(cmd) {
-            document.getElementById('rte-editor').focus();
-            document.execCommand(cmd, false, null);
-            syncRTE();
-        }
-
-        function syncRTE() {
-            // Ambil HTML dari editor, strip tag berbahaya, simpan ke hidden input
-            const html = document.getElementById('rte-editor').innerHTML;
-            document.getElementById('input_tema_kegiatan_val').value = html;
-        }
-
-        // Sync sebelum form disubmit
-        document.addEventListener('DOMContentLoaded', function() {
-            const form = document.querySelector('form');
-            if (form) form.addEventListener('submit', syncRTE);
-        });
-        </script>
-
-
-        <style>
-        /* ===== WAKTU PELAKSANAAN ===== */
-        .wakpel-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 18px;
-        }
-        @media (max-width: 700px) { .wakpel-grid { grid-template-columns: 1fr; } }
-
-        .wakpel-card {
-            background: rgba(0,0,0,0.25);
-            border: 1px solid #252525;
-            border-radius: 10px;
-            padding: 16px;
-        }
-        .wakpel-card-label {
-            font-size: 0.78rem;
-            color: #5a8fc4;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            font-weight: 600;
-            margin-bottom: 14px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        /* Date inputs */
-        .date-range-wrap {
-            display: grid;
-            grid-template-columns: 1fr auto 1fr;
-            gap: 6px;
-            align-items: center;
-        }
-        .date-field label { font-size: 0.7rem; color: #555; display: block; margin-bottom: 4px; }
-        .date-field input[type="date"] {
-            width: 100%;
-            background: #111;
-            border: 1px solid #2a2a2a;
-            border-radius: 8px;
-            color: #ccc;
-            padding: 9px 10px;
-            font-size: 0.85rem;
-            outline: none;
-            transition: border-color 0.2s;
-            cursor: pointer;
-            color-scheme: dark;
-        }
-        .date-field input[type="date"]:focus,
-        .date-field input[type="date"]:hover { border-color: #4A90E2; }
-        .date-sep { color: #444; font-size: 0.8rem; text-align: center; padding-top: 18px; white-space: nowrap; }
-
-        /* Preview bar */
-        .preview-bar {
-            margin-top: 12px;
-            padding: 8px 12px;
-            background: rgba(74,144,226,0.06);
-            border-radius: 6px;
-            border-left: 3px solid rgba(74,144,226,0.3);
-            font-size: 0.78rem;
-            color: #6a9fd4;
-            font-style: italic;
-            min-height: 34px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        /* ===== DRUM WHEEL ===== */
-        .drum-group {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .drum-group-sep { color: #555; font-size: 0.75rem; padding: 0 4px; }
-        .drum-groups-wrap {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            flex-wrap: wrap;
-        }
-        .drum-time-label {
-            font-size: 0.7rem;
-            color: #555;
-            text-align: center;
-            margin-bottom: 5px;
-        }
-        .drum-col {
-            width: 56px;
-            height: 168px;
-            overflow: hidden;
-            position: relative;
-            border-radius: 10px;
-            background: #0d0d0d;
-            border: 1px solid #222;
-            cursor: ns-resize;
-            transition: border-color 0.2s;
-        }
-        .drum-col:hover { border-color: #3a6a9a; }
-        .drum-col.active { border-color: #4A90E2; }
-        .drum-col::before, .drum-col::after {
-            content: '';
-            position: absolute;
-            left: 0; right: 0;
-            height: 60px;
-            z-index: 2;
-            pointer-events: none;
-        }
-        .drum-col::before { top: 0;    background: linear-gradient(to bottom, #0d0d0d 30%, transparent); }
-        .drum-col::after  { bottom: 0; background: linear-gradient(to top,   #0d0d0d 30%, transparent); }
-
-        .drum-highlight {
-            position: absolute;
-            top: 50%; transform: translateY(-50%);
-            left: 4px; right: 4px;
-            height: 40px;
-            border-radius: 6px;
-            border-top: 1px solid rgba(74,144,226,0.6);
-            border-bottom: 1px solid rgba(74,144,226,0.6);
-            background: rgba(74,144,226,0.1);
-            pointer-events: none;
-            z-index: 1;
-        }
-        .drum-inner {
-            position: absolute;
-            width: 100%;
-            transition: transform 0.18s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-        }
-        .drum-item {
-            height: 40px;
-            line-height: 40px;
-            text-align: center;
-            font-size: 0.95rem;
-            color: #444;
-            font-family: 'Courier New', monospace;
-            font-weight: 500;
-            user-select: none;
-            transition: color 0.12s, font-size 0.12s, font-weight 0.12s, text-shadow 0.12s;
-        }
-        .drum-item.sel   { color: #ffffff; font-size: 1.4rem; font-weight: 700; text-shadow: 0 0 8px rgba(255,255,255,0.4); }
-        .drum-item.near1 { color: #8ba6c1; font-size: 1.05rem; font-weight: 600; }
-        .drum-item.near2 { color: #506478; font-size: 0.9rem; }
-
-
-        .drum-colon {
-            color: #4A90E2;
-            font-size: 1.3rem;
-            font-weight: 700;
-            padding-bottom: 2px;
-            flex-shrink: 0;
-        }
-        .drum-arrow {
-            background: none;
-            border: none;
-            color: #3a4a5a;
-            cursor: pointer;
-            font-size: 0.7rem;
-            padding: 2px 6px;
-            border-radius: 4px;
-            display: block;
-            width: 100%;
-            text-align: center;
-            transition: color 0.15s, background 0.15s;
-        }
-        .drum-arrow:hover { color: #fff; background: rgba(74,144,226,0.2); }
-
-        /* Toggle switch */
-        .toggle-switch-wrap {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 14px;
-            background: rgba(0,0,0,0.2);
-            border-radius: 8px;
-            border: 1px solid #1e1e1e;
-            cursor: pointer;
-            transition: border-color 0.2s;
-        }
-        .toggle-switch-wrap:hover { border-color: #333; }
-        .toggle-switch {
-            position: relative; width: 36px; height: 20px;
-            background: #222; border-radius: 10px;
-            transition: background 0.25s; flex-shrink: 0;
-            border: 1px solid #333;
-        }
-        .toggle-switch.on { background: #2563a8; border-color: #4A90E2; }
-        .toggle-knob {
-            position: absolute; top: 2px; left: 2px;
-            width: 14px; height: 14px;
-            background: #555; border-radius: 50%;
-            transition: transform 0.25s, background 0.25s;
-        }
-        .toggle-switch.on .toggle-knob { transform: translateX(16px); background: #fff; }
-        .toggle-label { font-size: 0.8rem; color: #666; transition: color 0.2s; }
-        .toggle-switch-wrap.toggle-on .toggle-label { color: #7ab3e0; }
-
-        /* Template Picker Searchable */
-        .tpl-picker { position: relative; margin-bottom: 12px; }
-        .tpl-search-box { position: relative; }
-        .tpl-search-input { 
-            width: 100%; padding: 10px 15px 10px 35px; background: rgba(0,0,0,0.3); 
-            border: 1px solid #444; border-radius: 8px; color: white; font-size: 0.85rem; outline: none;
-            transition: all 0.2s;
-        }
-        .tpl-search-input:focus { border-color: #4A90E2; background: rgba(0,0,0,0.5); }
-        .tpl-search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #666; font-size: 0.8rem; }
-        
-        .tpl-results { 
-            position: absolute; top: 100%; left: 0; right: 0; z-index: 1000; 
-            background: #121822; border: 1px solid #333; border-top: none; 
-            max-height: 250px; overflow-y: auto; display: none; border-radius: 0 0 10px 10px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
-        }
-        .tpl-item { padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #1e2633; transition: all 0.2s; }
-        .tpl-item:hover { background: rgba(74, 144, 226, 0.15); }
-        .tpl-item-label { display: block; font-weight: 700; color: #8BB9F0; font-size: 0.82rem; margin-bottom: 3px; }
-        .tpl-item-text { display: block; font-size: 0.72rem; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .tpl-empty { padding: 15px; text-align: center; color: #555; font-size: 0.8rem; }
-        </style>
-
-        <div style="background: rgba(74,144,226,.04); padding: 18px; border-radius: 12px; border: 1px solid #1a2a3a; margin-bottom: 15px;">
-            <div style="color:#4A90E2; font-size:0.85rem; font-weight:600; margin-bottom:16px; display:flex; align-items:center; gap:8px;">
-                <i class="fas fa-calendar-alt"></i> Waktu Pelaksanaan
-            </div>
-
-            <div class="wakpel-grid">
-
-                <!-- ===== TANGGAL RANGE ===== -->
-                <div class="wakpel-card">
-                    <div class="wakpel-card-label"><i class="fas fa-calendar-day"></i> Hari &amp; Tanggal</div>
-                    <div class="date-range-wrap">
-                        <div class="date-field">
-                            <label>Mulai</label>
-                            <input type="date" id="tgl-mulai" onchange="formatTanggalRange()">
-                        </div>
-                        <div class="date-sep">—</div>
-                        <div class="date-field">
-                            <label>Selesai <span style="color:#3a3a3a;">(opsional)</span></label>
-                            <input type="date" id="tgl-selesai" onchange="formatTanggalRange()">
+                <?php if($is_edit && !empty($konten['lampiran_files'])): ?>
+                    <div style="margin-top:20px;">
+                        <div style="font-size: 0.75rem; color: #777; margin-bottom: 8px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">File PDF Tersimpan:</div>
+                        <div id="existing-files-list">
+                            <?php foreach($konten['lampiran_files'] as $idx => $filePath): 
+                                $fileName = basename($filePath);
+                            ?>
+                                <div class="preview-bar" id="existing-file-<?php echo $idx; ?>" style="margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; background: rgba(74, 144, 226, 0.05); border-color: rgba(74, 144, 226, 0.2);">
+                                    <span><i class="fas fa-check-circle" style="color:var(--accent-color);"></i> <?php echo htmlspecialchars($fileName); ?></span>
+                                    <button type="button" onclick="removeExistingFile('<?php echo htmlspecialchars($filePath); ?>', 'existing-file-<?php echo $idx; ?>')" style="background:none; border:none; color:#e74c3c; cursor:pointer; font-size:1rem;"><i class="fas fa-times"></i></button>
+                                </div>
+                            <?php endforeach; ?>
                         </div>
                     </div>
-                    <input type="hidden" id="out-tanggal" name="pelaksanaan_hari_tanggal"
-                           value="<?php echo htmlspecialchars($edit_data['pelaksanaan_hari_tanggal']); ?>">
-                    <div class="preview-bar">
-                        <i class="fas fa-eye" style="color:#3a6a9a; flex-shrink:0;"></i>
-                        <span id="preview-tanggal"><?php echo htmlspecialchars($edit_data['pelaksanaan_hari_tanggal']); ?></span>
-                    </div>
-                </div>
+                <?php endif; ?>
+            </div>
+        </div>
 
-                <!-- ===== WAKTU DRUM ===== -->
-                <div class="wakpel-card">
-                    <div class="wakpel-card-label"><i class="fas fa-clock"></i> Waktu</div>
-                    <input type="hidden" id="out-waktu" name="pelaksanaan_waktu"
-                           value="<?php echo htmlspecialchars($edit_data['pelaksanaan_waktu']); ?>">
-
-                    <div class="drum-groups-wrap">
-                        <!-- Drum Mulai -->
-                        <div>
-                            <div class="drum-time-label">Mulai</div>
-                            <div class="drum-group">
-                                <div>
-                                    <button type="button" class="drum-arrow" onclick="drumHS.scrollBy(-1)">▲</button>
-                                    <div class="drum-col" id="drum-h-start"></div>
-                                    <button type="button" class="drum-arrow" onclick="drumHS.scrollBy(1)">▼</button>
+        <!-- CARD 5: TANDA TANGAN PANITIA -->
+        <div class="card" style="overflow: visible;">
+            <div class="card-header"><i class="fas fa-pen-nib"></i> Penanggung Jawab / Panitia</div>
+            <div class="card-body">
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Nama Ketua Pelaksana</label>
+                        <div class="tpl-picker" id="picker-panitia-ketua">
+                            <i class="fas fa-search tpl-search-icon"></i>
+                            <input type="text" name="panitia_ketua" class="tpl-search-input" placeholder="Cari atau ketik nama..." value="<?php echo htmlspecialchars($edit_data['panitia_ketua'] ?? ''); ?>" required style="text-transform: uppercase;" onfocus="showTplResults('panitia-ketua')" onkeyup="filterTpl('panitia-ketua')" oninput="handleCustomName('ketua', this.value)">
+                            <div class="tpl-results" id="results-panitia-ketua">
+                                <?php foreach($panitia_ketua_list as $pk): ?>
+                                <div class="tpl-item" onclick="selectSavedPanitia('ketua', <?php echo htmlspecialchars(json_encode(['nama' => $pk['nama'], 'ttd' => $pk['file_ttd']])); ?>)">
+                                    <div class="tpl-item-label"><?php echo htmlspecialchars($pk['nama']); ?></div>
+                                    <div class="tpl-item-text">Ketua Pelaksana Tersimpan</div>
                                 </div>
-                                <span class="drum-colon">:</span>
-                                <div>
-                                    <button type="button" class="drum-arrow" onclick="drumMS.scrollBy(-1)">▲</button>
-                                    <div class="drum-col" id="drum-m-start"></div>
-                                    <button type="button" class="drum-arrow" onclick="drumMS.scrollBy(1)">▼</button>
-                                </div>
+                                <?php endforeach; ?>
                             </div>
                         </div>
-
-                        <div style="color:#2a3a4a; font-size:0.8rem; padding-top:24px; flex-shrink:0;">s.d</div>
-
-                        <!-- Drum Selesai -->
-                        <div id="drum-end-wrap">
-                            <div class="drum-time-label">Selesai</div>
-                            <div class="drum-group">
-                                <div>
-                                    <button type="button" class="drum-arrow" onclick="drumHE.scrollBy(-1)">▲</button>
-                                    <div class="drum-col" id="drum-h-end"></div>
-                                    <button type="button" class="drum-arrow" onclick="drumHE.scrollBy(1)">▼</button>
-                                </div>
-                                <span class="drum-colon">:</span>
-                                <div>
-                                    <button type="button" class="drum-arrow" onclick="drumME.scrollBy(-1)">▲</button>
-                                    <div class="drum-col" id="drum-m-end"></div>
-                                    <button type="button" class="drum-arrow" onclick="drumME.scrollBy(1)">▼</button>
-                                </div>
+                        <div style="margin-top:15px;">
+                            <label>Mode Tanda Tangan</label>
+                            <select id="ttd_mode_ketua" onchange="changeTtdMode('ketua')">
+                                <option value="database" style="display:none;">📂 Gunakan TTD Tersimpan</option>
+                                <option value="draw">✍️ Gambar Manual</option>
+                                <option value="upload">📁 Upload Gambar</option>
+                                <option value="none" selected>🚫 Kosong / TTD Basah</option>
+                            </select>
+                            <div id="wrap_canvas_ketua" style="display:none; margin-top:12px;">
+                                <canvas id="pad_ketua" width="300" height="150"></canvas>
+                                <div style="text-align:center; margin-top:10px;"><button type="button" onclick="clearPad('ketua')" class="btn-outline">Reset Canvas</button></div>
                             </div>
-                        </div>
-
-                        <!-- Toggle Selesai -->
-                        <div style="padding-top:28px;">
-                            <div class="toggle-switch-wrap" id="toggle-selesai-wrap" onclick="doToggleSelesai()">
-                                <div class="toggle-switch" id="ts-switch"><div class="toggle-knob"></div></div>
-                                <span class="toggle-label" id="ts-label">Tanpa waktu akhir</span>
+                            <div id="wrap_upload_ketua" style="display:none; margin-top:12px;"><input type="file" id="upload_ketua" accept="image/png" onchange="handleTtdUpload('ketua', this)"></div>
+                            <input type="hidden" name="panitia_ketua_ttd" id="ttd_ketua_val" value="<?php echo htmlspecialchars($edit_data['panitia_ketua_ttd'] ?? ''); ?>">
+                            <div id="preview_ttd_ketua" style="margin-top:15px; display:none; text-align:center;">
+                                <img id="img_preview_ketua" style="max-height:80px; border-radius:8px; border: 1px solid var(--border-color); background: #fff; padding: 5px;">
                             </div>
                         </div>
                     </div>
-
-                    <div class="preview-bar" style="margin-top:14px;">
-                        <i class="fas fa-eye" style="color:#3a6a9a; flex-shrink:0;"></i>
-                        <span id="preview-waktu"><?php echo htmlspecialchars($edit_data['pelaksanaan_waktu']); ?></span>
+                    <div class="form-group">
+                        <label>Nama Sekretaris Pelaksana</label>
+                        <div class="tpl-picker" id="picker-panitia-sekretaris">
+                            <i class="fas fa-search tpl-search-icon"></i>
+                            <input type="text" name="panitia_sekretaris" class="tpl-search-input" placeholder="Cari atau ketik nama..." value="<?php echo htmlspecialchars($edit_data['panitia_sekretaris'] ?? ''); ?>" required style="text-transform: uppercase;" onfocus="showTplResults('panitia-sekretaris')" onkeyup="filterTpl('panitia-sekretaris')" oninput="handleCustomName('sekretaris', this.value)">
+                            <div class="tpl-results" id="results-panitia-sekretaris">
+                                <?php foreach($panitia_sekretaris_list as $ps): ?>
+                                <div class="tpl-item" onclick="selectSavedPanitia('sekretaris', <?php echo htmlspecialchars(json_encode(['nama' => $ps['nama'], 'ttd' => $ps['file_ttd']])); ?>)">
+                                    <div class="tpl-item-label"><?php echo htmlspecialchars($ps['nama']); ?></div>
+                                    <div class="tpl-item-text">Sekretaris Pelaksana Tersimpan</div>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                        <div style="margin-top:15px;">
+                            <label>Mode Tanda Tangan</label>
+                            <select id="ttd_mode_sekretaris" onchange="changeTtdMode('sekretaris')">
+                                <option value="database" style="display:none;">📂 Gunakan TTD Tersimpan</option>
+                                <option value="draw">✍️ Gambar Manual</option>
+                                <option value="upload">📁 Upload Gambar</option>
+                                <option value="none" selected>🚫 Kosong / TTD Basah</option>
+                            </select>
+                            <div id="wrap_canvas_sekretaris" style="display:none; margin-top:12px;">
+                                <canvas id="pad_sekretaris" width="300" height="150"></canvas>
+                                <div style="text-align:center; margin-top:10px;"><button type="button" onclick="clearPad('sekretaris')" class="btn-outline">Reset Canvas</button></div>
+                            </div>
+                            <div id="wrap_upload_sekretaris" style="display:none; margin-top:12px;"><input type="file" id="upload_sekretaris" accept="image/png" onchange="handleTtdUpload('sekretaris', this)"></div>
+                            <input type="hidden" name="panitia_sekretaris_ttd" id="ttd_sekretaris_val" value="<?php echo htmlspecialchars($edit_data['panitia_sekretaris_ttd'] ?? ''); ?>">
+                            <div id="preview_ttd_sekretaris" style="margin-top:15px; display:none; text-align:center;">
+                                <img id="img_preview_sekretaris" style="max-height:80px; border-radius:8px; border: 1px solid var(--border-color); background: #fff; padding: 5px;">
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
+        </div>
 
-            <!-- TEMPAT — full width bawah -->
-            <div class="form-group" style="margin-top:14px; margin-bottom:0;">
-                <label style="font-size:0.82rem; color:#aaa; margin-bottom:6px; display:flex; align-items:center; gap:6px;">
-                    <i class="fas fa-map-marker-alt" style="color:#5a8fc4;"></i> Tempat Pelaksanaan
-                </label>
-                <input type="text" name="pelaksanaan_tempat" class="form-control"
-                       placeholder="Kampus INSTBUNAS Majalengka, GOR Futsal..."
-                       value="<?php echo htmlspecialchars($edit_data['pelaksanaan_tempat']); ?>" required>
+        <!-- CARD 6: OPSI TANDA TANGAN & STEMPEL -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-stamp"></i> Opsi Pengesahan & Stempel</div>
+            <div class="card-body">
+                <div class="grid-2">
+                    <div class="switch-container"><span class="switch-label"><i class="fas fa-user-tie"></i> Sertakan TTD WAREK III</span><label class="switch"><input type="checkbox" name="use_ttd_warek" value="1" <?php echo ($edit_data['use_ttd_warek'] ?? '1') == '1' ? 'checked' : ''; ?>><span class="slider"></span></label></div>
+                    <div class="switch-container"><span class="switch-label"><i class="fas fa-user-graduate"></i> Sertakan TTD PRESMA BEM</span><label class="switch"><input type="checkbox" name="use_ttd_presma" value="1" <?php echo ($edit_data['use_ttd_presma'] ?? '1') == '1' ? 'checked' : ''; ?>><span class="slider"></span></label></div>
+                    <div class="switch-container"><span class="switch-label"><i class="fas fa-stamp"></i> Sertakan Cap PANITIA</span><label class="switch"><input type="checkbox" name="use_cap_panitia" value="1" <?php echo ($edit_data['use_cap_panitia'] ?? '1') == '1' ? 'checked' : ''; ?>><span class="slider"></span></label></div>
+                    <div class="switch-container"><span class="switch-label"><i class="fas fa-stamp"></i> Sertakan Cap WAREK</span><label class="switch"><input type="checkbox" name="use_cap_warek" value="1" <?php echo ($edit_data['use_cap_warek'] ?? '1') == '1' ? 'checked' : ''; ?>><span class="slider"></span></label></div>
+                    <div class="switch-container"><span class="switch-label"><i class="fas fa-stamp"></i> Sertakan Cap BEM</span><label class="switch"><input type="checkbox" name="use_cap_presma" value="1" <?php echo ($edit_data['use_cap_presma'] ?? '1') == '1' ? 'checked' : ''; ?>><span class="slider"></span></label></div>
+                </div>
             </div>
         </div>
 
-        <script>
-        // ================================================================
-        // DRUM PICKER CLASS
-        // ================================================================
-        class DrumPicker {
-            constructor(elId, values, initVal, onChange) {
-                this.el       = document.getElementById(elId);
-                this.values   = values;
-                this.idx      = Math.max(0, values.indexOf(initVal));
-                this.onChange = onChange;
-                this.ITEM     = 40;
-                this._build();
-                this._bind();
-                this._render(false);
-            }
-            _build() {
-                const hl = document.createElement('div');
-                hl.className = 'drum-highlight';
-                this.el.appendChild(hl);
-
-                this.inner = document.createElement('div');
-                this.inner.className = 'drum-inner';
-                this.inner.style.transition = 'none'; // no anim on build
-
-                const pad = () => { const d=document.createElement('div'); d.className='drum-item'; return d; };
-                [0,1,2].forEach(() => this.inner.appendChild(pad())); // 3 pads top (center=3rd item visible)
-
-                this.values.forEach((v, i) => {
-                    const d = document.createElement('div');
-                    d.className = 'drum-item'; d.dataset.i = i; d.textContent = v;
-                    this.inner.appendChild(d);
-                });
-
-                [0,1,2].forEach(() => this.inner.appendChild(pad())); // 3 pads bottom
-                this.el.appendChild(this.inner);
-            }
-            _render(animate = true) {
-                // Height of drum = 168, center = 84
-                // Item height = 40, half-height = 20
-                // Pads = 3 items = 120px top offset
-                // Target item top relative to inner = 120 + idx * 40
-                // Translation offset = Center(84) - Half(20) - TargetTop(120 + idx*40)
-                const offset = -56 - this.idx * this.ITEM;
-
-                this.inner.style.transition = animate ? 'transform 0.18s cubic-bezier(0.25,0.46,0.45,0.94)' : 'none';
-                this.inner.style.transform  = `translateY(${offset}px)`;
-
-                this.inner.querySelectorAll('[data-i]').forEach(el => {
-                    const diff = Math.abs(parseInt(el.dataset.i) - this.idx);
-                    // To handle wrapping style mapping smoothly, calculate shortest distance in modulo space:
-                    const len = this.values.length;
-                    const wrapDiff = Math.min(diff, len - diff);
-                    
-                    el.className = 'drum-item' + (wrapDiff===0?' sel':wrapDiff===1?' near1':wrapDiff===2?' near2':'');
-                });
-                
-                // Fix: delay onChange execution to avoid accessing undefined obj during construct
-                if (this.onChange) setTimeout(() => this.onChange(this.values[this.idx]), 0);
-            }
-            scrollBy(delta) {
-                const oldIdx = this.idx;
-                const len = this.values.length;
-                
-                // Loop the index
-                this.idx = (this.idx + delta) % len;
-                if (this.idx < 0) this.idx += len;
-
-                // Disable animation if wrapped around so it doesn't slide across the whole list
-                const wrapped = Math.abs(this.idx - oldIdx) > 1;
-
-                // Flash active border
-                this.el.classList.add('active');
-                clearTimeout(this._at);
-                this._at = setTimeout(() => this.el.classList.remove('active'), 300);
-                this._render(!wrapped);
-            }
-            _bind() {
-                this.el.addEventListener('wheel', e => {
-                    e.preventDefault(); this.scrollBy(e.deltaY > 0 ? 1 : -1);
-                }, { passive: false });
-                let ty = 0, moved = false;
-                this.el.addEventListener('touchstart', e => { ty = e.touches[0].clientY; moved = false; });
-                this.el.addEventListener('touchmove', e => {
-                    e.preventDefault();
-                    const d = ty - e.touches[0].clientY;
-                    if (Math.abs(d) > 14) { this.scrollBy(d > 0 ? 1 : -1); ty = e.touches[0].clientY; moved = true; }
-                }, { passive: false });
-                this.inner.addEventListener('click', e => {
-                    if (moved) return;
-                    const item = e.target.closest('[data-i]');
-                    if (item) { this.idx = parseInt(item.dataset.i); this._render(true); }
-                });
-            }
-            val() { return this.values[this.idx]; }
-        }
-
-        // ================================================================
-        // INIT
-        // ================================================================
-        const hours = Array.from({length:24}, (_,i) => String(i).padStart(2,'0'));
-        const mins  = Array.from({length:60}, (_,i) => String(i).padStart(2,'0'));
-
-        const existingWaktu = document.getElementById('out-waktu').value || '';
-        const wParts  = existingWaktu.split(' s.d ');
-        const startT  = (wParts[0] || '08.00').replace('.', ':').split(':');
-        const isSelesai = !wParts[1] || wParts[1] === 'Selesai';
-        const endT    = !isSelesai ? wParts[1].replace('.', ':').split(':') : null;
-
-        let drumHS, drumMS, drumHE, drumME;
-        let _selesaiMode = isSelesai;
-
-        document.addEventListener('DOMContentLoaded', () => {
-            drumHS = new DrumPicker('drum-h-start', hours, startT[0]||'08', updateWaktu);
-            drumMS = new DrumPicker('drum-m-start', mins,  startT[1]||'00', updateWaktu);
-            drumHE = new DrumPicker('drum-h-end',   hours, endT?endT[0]:'17', updateWaktu);
-            drumME = new DrumPicker('drum-m-end',   mins,  endT?endT[1]:'00', updateWaktu);
-
-            if (isSelesai) applyToggleSelesai(true);
-
-            const existingTgl = document.getElementById('out-tanggal').value;
-            if (existingTgl) document.getElementById('preview-tanggal').textContent = existingTgl;
-        });
-
-        function updateWaktu() {
-            // Cancel if any drum isn't fully created yet to avoid undefined errors
-            if (!drumHS || !drumMS || !drumHE || !drumME) return;
-            const start  = drumHS.val() + '.' + drumMS.val();
-            const end    = _selesaiMode ? 'Selesai' : drumHE.val() + '.' + drumME.val();
-            const result = start + ' s.d ' + end;
-            document.getElementById('out-waktu').value   = result;
-            document.getElementById('preview-waktu').textContent = result;
-        }
-
-        function doToggleSelesai() {
-            _selesaiMode = !_selesaiMode;
-            applyToggleSelesai(_selesaiMode);
-        }
-
-        function applyToggleSelesai(on) {
-            _selesaiMode = on;
-            const sw   = document.getElementById('ts-switch');
-            const wrap = document.getElementById('toggle-selesai-wrap');
-            const lbl  = document.getElementById('ts-label');
-            const end  = document.getElementById('drum-end-wrap');
-            sw.classList.toggle('on', on);
-            wrap.classList.toggle('toggle-on', on);
-            lbl.textContent  = on ? 'Tanpa waktu akhir' : 'Dengan waktu akhir';
-            end.style.opacity       = on ? '0.2' : '1';
-            end.style.pointerEvents = on ? 'none' : '';
-            updateWaktu();
-        }
-
-        // ================================================================
-        // DATE RANGE → Indonesian format
-        // ================================================================
-        const HARI_ID  = ['Minggu','Senin','Selasa','Rabu','Kamis',"Jum'at",'Sabtu'];
-        const BULAN_ID = ['Januari','Februari','Maret','April','Mei','Juni',
-                          'Juli','Agustus','September','Oktober','November','Desember'];
-
-        function formatTanggalRange() {
-            const mulai   = document.getElementById('tgl-mulai').value;
-            const selesai = document.getElementById('tgl-selesai').value;
-            if (!mulai) { document.getElementById('preview-tanggal').textContent = '—belum dipilih—'; return; }
-
-            const d1 = new Date(mulai + 'T00:00:00');
-            let result = '';
-
-            if (!selesai || selesai === mulai) {
-                result = HARI_ID[d1.getDay()] + ', ' + d1.getDate() + ' ' + BULAN_ID[d1.getMonth()] + ' ' + d1.getFullYear();
-            } else {
-                const d2 = new Date(selesai + 'T00:00:00');
-                const hari = HARI_ID[d1.getDay()] === HARI_ID[d2.getDay()]
-                    ? HARI_ID[d1.getDay()]
-                    : HARI_ID[d1.getDay()] + '-' + HARI_ID[d2.getDay()];
-                const bln1 = BULAN_ID[d1.getMonth()], bln2 = BULAN_ID[d2.getMonth()];
-                const tgl  = bln1 === bln2 && d1.getFullYear() === d2.getFullYear()
-                    ? d1.getDate() + '-' + d2.getDate() + ' ' + bln1 + ' ' + d1.getFullYear()
-                    : d1.getDate() + ' ' + bln1 + ' ' + d1.getFullYear() + ' – ' + d2.getDate() + ' ' + bln2 + ' ' + d2.getFullYear();
-                result = hari + ', ' + tgl;
-            }
-
-            document.getElementById('out-tanggal').value = result;
-            document.getElementById('preview-tanggal').textContent = result;
-        }
-        </script>
-
-
-        <div class="form-group">
-            <label>Konteks Tambahan (Akhiran Kalimat) <small style="color:#666;">(Opsional — akan sepenuhnya menggantikan akhiran kalimat permohonan default)</small></label>
-            <input type="text" name="konteks" class="form-control" 
-                   placeholder="cth: untuk mengirimkan 2 orang delegasi pada acara tersebut"
-                   value="<?php echo htmlspecialchars($edit_data['konteks'] ?? ''); ?>">
-        </div>
-        <div class="form-group">
-            <label>Tembusan (Opsional)</label>
-            <textarea name="tembusan" class="form-control" rows="2" placeholder="1. Bagian Umum..."><?php echo htmlspecialchars($edit_data['tembusan'] ?? ''); ?></textarea>
-        </div>
-        <div class="form-group">
-            <label>Lampiran Berkas (Opsional)</label>
-            <input type="file" name="lampiran_surat[]" class="form-control" accept=".pdf" multiple>
-            <small style="color:#aaa; display:block; margin-top:5px;">Pilih satu atau lebih file PDF sekaligus. Indikator "Lampiran" di surat akan berubah seiring jumlah berkas.</small>
-            
-            <?php if($is_edit && !empty($konten['lampiran_files'])): ?>
-                <div style="background: rgba(42, 53, 69, 0.5); padding: 10px; border-radius: 6px; margin-top: 10px; border: 1px solid #3a4a5a;">
-                    <strong style="color: #4A90E2; font-size: 0.85rem;"><i class="fas fa-file-pdf"></i> Lampiran Tersimpan Saat Ini (<?php echo count($konten['lampiran_files']); ?> File)</strong>
-                    <ul style="margin: 5px 0 0 20px; font-size: 0.85rem; color: #ccc;">
-                    <?php foreach($konten['lampiran_files'] as $l): ?>
-                        <li><a href="<?php echo baseUrl($l); ?>" target="_blank" style="color: #8BB9F0;"><?php echo htmlspecialchars(basename($l)); ?></a></li>
-                    <?php endforeach; ?>
-                    </ul>
-                    <small style="color:#f39c12; margin-top: 5px; display:inline-block;">*Mengunggah berkas baru akan secara otomatis menambahkan ke lampiran yang sudah ada.</small>
-                </div>
-            <?php endif; ?>
-        </div>
-
-        <h3 style="border-bottom: 1px solid #333; padding-bottom: 10px; margin: 30px 0 20px; color:#4A90E2;">3. Tanda Tangan Kepanitiaan</h3>
-        
-        <div style="display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap;">
-            <div class="form-group" style="flex:1; min-width:300px;">
-                <label>Nama Ketua Pelaksana</label>
-                <input type="text" name="panitia_ketua" class="form-control" placeholder="ADE LIA AGUSTINA" value="<?php echo htmlspecialchars($edit_data['panitia_ketua']); ?>" required>
-                
-                <h4 style="margin-bottom: 5px; margin-top: 15px; color:#8BB9F0; font-size: 0.85rem;"><i class="fas fa-pen-nib"></i> Mode Tanda Tangan</h4>
-                <select id="ttd_mode_ketua" class="form-control" style="margin-bottom:8px;" onchange="changeTtdMode('ketua')">
-                    <option value="draw">✍️ Gambar Manual (Layar)</option>
-                    <option value="upload">📁 Upload Gambar (.PNG Transparan)</option>
-                    <option value="none" selected>🚫 Kosong (Tanda Tangan Asli Nanti)</option>
-                </select>
-
-                <div id="wrap_canvas_ketua" style="display:none;">
-                    <div style="border: 1px solid #2a3545; border-radius: 8px; overflow: hidden; background: #fff; width: 300px; max-width: 100%; margin: 0 auto;">
-                        <canvas id="pad_ketua" width="300" height="150" style="cursor:crosshair; touch-action:none; display:block; max-width: 100%; height: auto;"></canvas>
-                    </div>
-                    <div style="text-align: right; margin-top: 10px; width: 300px; max-width: 100%; margin-left: auto; margin-right: auto;">
-                        <button type="button" onclick="clearPad('ketua')" style="background:#2a1111; border: 1px solid #E74C3C; color:#ff6b6b; padding: 6px 12px; border-radius: 5px; font-size:0.85rem; cursor:pointer; transition: all 0.2s;"><i class="fas fa-trash-alt"></i> Bersihkan Coretan</button>
-                    </div>
-                </div>
-
-                <div id="wrap_upload_ketua" style="display:none;">
-                    <input type="file" id="upload_ketua" class="form-control" accept="image/png, image/jpeg, image/webp" onchange="handleTtdUpload('ketua', this)">
-                    <small style="color:#aaa;">File ini akan disisipkan ke cetak surat dalam bentuk digital (tanpa disimpan di penyimpanan server).</small>
-                </div>
-
-                <div id="preview_ttd_ketua" style="margin-top:10px; <?php echo !empty($edit_data['panitia_ketua_ttd']) ? '' : 'display:none;'; ?>">
-                    <small style="color:#27ae60; display:block; margin-bottom:5px;"><i class="fas fa-check-circle"></i> Tanda tangan tersimpan:</small>
-                    <img id="img_preview_ketua" src="<?php echo htmlspecialchars($edit_data['panitia_ketua_ttd'] ?? ''); ?>" style="max-height:60px; border:1px solid #333; background:#fff; padding:2px; border-radius:4px;">
-                </div>
-
-                <input type="hidden" name="panitia_ketua_ttd" id="ttd_ketua_val" value="<?php echo htmlspecialchars($edit_data['panitia_ketua_ttd'] ?? ''); ?>">
-            </div>
-            
-            <div class="form-group" style="flex:1; min-width:300px;">
-                <label>Nama Sekretaris Pelaksana</label>
-                <input type="text" name="panitia_sekretaris" class="form-control" placeholder="ANGGI DIYARTI" value="<?php echo htmlspecialchars($edit_data['panitia_sekretaris']); ?>" required>
-                
-                <h4 style="margin-bottom: 5px; margin-top: 15px; color:#8BB9F0; font-size: 0.85rem;"><i class="fas fa-pen-nib"></i> Mode Tanda Tangan</h4>
-                <select id="ttd_mode_sekretaris" class="form-control" style="margin-bottom:8px;" onchange="changeTtdMode('sekretaris')">
-                    <option value="draw">✍️ Gambar Manual (Layar)</option>
-                    <option value="upload">📁 Upload Gambar (.PNG Transparan)</option>
-                    <option value="none" selected>🚫 Kosong (Tanda Tangan Asli Nanti)</option>
-                </select>
-
-                <div id="wrap_canvas_sekretaris" style="display:none;">
-                    <div style="border: 1px solid #2a3545; border-radius: 8px; overflow: hidden; background: #fff; width: 300px; max-width: 100%; margin: 0 auto;">
-                        <canvas id="pad_sekretaris" width="300" height="150" style="cursor:crosshair; touch-action:none; display:block; max-width: 100%; height: auto;"></canvas>
-                    </div>
-                    <div style="text-align: right; margin-top: 10px; width: 300px; max-width: 100%; margin-left: auto; margin-right: auto;">
-                        <button type="button" onclick="clearPad('sekretaris')" style="background:#2a1111; border: 1px solid #E74C3C; color:#ff6b6b; padding: 6px 12px; border-radius: 5px; font-size:0.85rem; cursor:pointer; transition: all 0.2s;"><i class="fas fa-trash-alt"></i> Bersihkan Coretan</button>
-                    </div>
-                </div>
-
-                <div id="wrap_upload_sekretaris" style="display:none;">
-                    <input type="file" id="upload_sekretaris" class="form-control" accept="image/png, image/jpeg, image/webp" onchange="handleTtdUpload('sekretaris', this)">
-                    <small style="color:#aaa;">File ini akan disisipkan ke cetak surat dalam bentuk digital (tanpa disimpan di penyimpanan server).</small>
-                </div>
-
-                <div id="preview_ttd_sekretaris" style="margin-top:10px; <?php echo !empty($edit_data['panitia_sekretaris_ttd']) ? '' : 'display:none;'; ?>">
-                    <small style="color:#27ae60; display:block; margin-bottom:5px;"><i class="fas fa-check-circle"></i> Tanda tangan tersimpan:</small>
-                    <img id="img_preview_sekretaris" src="<?php echo htmlspecialchars($edit_data['panitia_sekretaris_ttd'] ?? ''); ?>" style="max-height:60px; border:1px solid #333; background:#fff; padding:2px; border-radius:4px;">
-                </div>
-
-                <input type="hidden" name="panitia_sekretaris_ttd" id="ttd_sekretaris_val" value="<?php echo htmlspecialchars($edit_data['panitia_sekretaris_ttd'] ?? ''); ?>">
-            </div>
-        </div>
-
-        <script>
-        const pads = {};
-
-        function resizeCanvas(role) {
-            if (!pads[role]) return;
-            const canvas = pads[role].canvas;
-            const ctx = pads[role].ctx;
-            
-            // Render ulang resolusi dinonaktifkan agar kanvas tetap fix 300x150 (Aspect Ratio ideal TTD)
-            // Restore drawing context states
-            ctx.lineWidth = 2.5;
-            ctx.lineCap = 'round';
-            ctx.strokeStyle = '#02183b';
-        }
-        
-        function changeTtdMode(role) {
-            const mode = document.getElementById('ttd_mode_' + role).value;
-            const wrapCanvas = document.getElementById('wrap_canvas_' + role);
-            
-            wrapCanvas.style.display = mode === 'draw' ? 'block' : 'none';
-            document.getElementById('wrap_upload_' + role).style.display = mode === 'upload' ? 'block' : 'none';
-
-            const hidVal = document.getElementById('ttd_' + role + '_val');
-            
-            if (mode === 'none') {
-                hidVal.value = ''; 
-            } else if (mode === 'draw') {
-                resizeCanvas(role); // Fix scale
-                // REMOVED: hidVal.value = pads[role].canvas.toDataURL('image/png');
-                // Alasan: Menyebabkan data TTD yang sudah ada tertimpa kanvas kosong saat inisialisasi.
-                // Update nilai kini hanya dilakukan saat user selesai menggores (event end).
-            } else if (mode === 'upload') {
-                const fileIn = document.getElementById('upload_' + role);
-                if (fileIn.files.length > 0) handleTtdUpload(role, fileIn);
-            }
-        }
-
-        function handleTtdUpload(role, input) {
-            if (input.files && input.files[0]) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const res = e.target.result;
-                    document.getElementById('ttd_' + role + '_val').value = res;
-                    // Update preview
-                    document.getElementById('preview_ttd_' + role).style.display = 'block';
-                    document.getElementById('img_preview_' + role).src = res;
-                };
-                reader.readAsDataURL(input.files[0]);
-            }
-        }
-
-        function initSignaturePad(role) {
-            const canvas = document.getElementById('pad_' + role);
-            if(!canvas) return;
-            const ctx = canvas.getContext('2d');
-            let isDrawing = false;
-            
-            // Fix dimension overrides are disabled. We rely on the raw HTML width/height.
-            // canvas.width = 300;
-            
-            pads[role] = { canvas, ctx };
-
-            // Load existing OR set to none
-            const hidValEl = document.getElementById('ttd_' + role + '_val');
-            const existingVal = hidValEl ? hidValEl.value : '';
-            const sel = document.getElementById('ttd_mode_' + role);
-            
-            if(existingVal && existingVal.length > 100) { // Cek panjang base64
-                sel.value = 'draw';
-                const wrap_canvas = document.getElementById('wrap_canvas_' + role);
-                wrap_canvas.style.display = 'block';
-                resizeCanvas(role);
-                const img = new Image();
-                img.onload = () => ctx.drawImage(img, 0, 0);
-                img.src = existingVal;
-            } else {
-                sel.value = 'none';
-                changeTtdMode(role);
-            }
-
-            ctx.lineWidth = 2.5;
-            ctx.lineCap = 'round';
-            ctx.strokeStyle = '#02183b'; // Tinta biru dongker/hitam
-
-            function getPos(e) {
-                const r = canvas.getBoundingClientRect();
-                const scaleX = canvas.width / r.width;
-                const scaleY = canvas.height / r.height;
-                
-                let cx = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
-                let cy = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
-                
-                return { 
-                    x: (cx - r.left) * scaleX, 
-                    y: (cy - r.top) * scaleY 
-                };
-            }
-
-            function start(e) {
-                e.preventDefault();
-                isDrawing = true;
-                const pos = getPos(e);
-                ctx.beginPath();
-                ctx.moveTo(pos.x, pos.y);
-            }
-
-            function draw(e) {
-                if (!isDrawing) return;
-                e.preventDefault();
-                const pos = getPos(e);
-                ctx.lineTo(pos.x, pos.y);
-                ctx.stroke();
-            }
-
-            function end() {
-                if (isDrawing) {
-                    isDrawing = false;
-                    const dataUrl = canvas.toDataURL('image/png');
-                    document.getElementById('ttd_' + role + '_val').value = dataUrl;
-                    // Update preview
-                    document.getElementById('preview_ttd_' + role).style.display = 'block';
-                    document.getElementById('img_preview_' + role).src = dataUrl;
-                }
-            }
-
-            canvas.addEventListener('mousedown', start, {passive:false});
-            canvas.addEventListener('mousemove', draw, {passive:false});
-            window.addEventListener('mouseup', end);
-
-            canvas.addEventListener('touchstart', start, {passive:false});
-            canvas.addEventListener('touchmove', draw, {passive:false});
-            window.addEventListener('touchend', end);
-        }
-
-        function clearPad(role) {
-            if(pads[role]) {
-                pads[role].ctx.clearRect(0, 0, pads[role].canvas.width, pads[role].canvas.height);
-                document.getElementById('ttd_' + role + '_val').value = '';
-            }
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            initSignaturePad('ketua');
-            initSignaturePad('sekretaris');
-        });
-        </script>
-        <h3 style="border-bottom: 1px solid #333; padding-bottom: 10px; margin: 40px 0 20px; color:#4A90E2;">4. Pengaturan Tanda Tangan & Stempel Instansi</h3>
-        <div style="display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap;">
-            <div class="form-group" style="flex:1; min-width:300px;">
-                <label>Sertakan Tanda Tangan WAREK III?</label>
-                <select name="use_ttd_warek" class="form-control">
-                    <option value="1" <?php echo ($edit_data['use_ttd_warek'] ?? '1') == '1' ? 'selected' : ''; ?>>✅ Ya, gunakan TTD Digital</option>
-                    <option value="0" <?php echo ($edit_data['use_ttd_warek'] ?? '1') == '0' ? 'selected' : ''; ?>>🚫 Tidak (Biarkan kosong untuk TTD fisik)</option>
-                </select>
-                <small style="color:#aaa;">Gambar akan diambil dari Pengaturan Surat.</small>
-            </div>
-            <div class="form-group" style="flex:1; min-width:300px;">
-                <label>Sertakan Tanda Tangan PRESMA BEM?</label>
-                <select name="use_ttd_presma" class="form-control">
-                    <option value="1" <?php echo ($edit_data['use_ttd_presma'] ?? '1') == '1' ? 'selected' : ''; ?>>✅ Ya, gunakan TTD Digital</option>
-                    <option value="0" <?php echo ($edit_data['use_ttd_presma'] ?? '1') == '0' ? 'selected' : ''; ?>>🚫 Tidak (Biarkan kosong untuk TTD fisik)</option>
-                </select>
-                <small style="color:#aaa;">Gambar akan diambil dari Pengaturan Surat.</small>
-            </div>
-        </div>
-
-        <div style="display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap;">
-            <div class="form-group" style="flex:1; min-width:200px;">
-                <label>Sertakan Cap PANITIA?</label>
-                <select name="use_cap_panitia" class="form-control">
-                    <option value="1" <?php echo ($edit_data['use_cap_panitia'] ?? '1') == '1' ? 'selected' : ''; ?>>✅ Ya</option>
-                    <option value="0" <?php echo ($edit_data['use_cap_panitia'] ?? '1') == '0' ? 'selected' : ''; ?>>🚫 Tidak</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:1; min-width:200px;">
-                <label>Sertakan Cap WAREK / LEMBAGA?</label>
-                <select name="use_cap_warek" class="form-control">
-                    <option value="1" <?php echo ($edit_data['use_cap_warek'] ?? '1') == '1' ? 'selected' : ''; ?>>✅ Ya</option>
-                    <option value="0" <?php echo ($edit_data['use_cap_warek'] ?? '1') == '0' ? 'selected' : ''; ?>>🚫 Tidak</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:1; min-width:200px;">
-                <label>Sertakan Cap BEM?</label>
-                <select name="use_cap_presma" class="form-control">
-                    <option value="1" <?php echo ($edit_data['use_cap_presma'] ?? '1') == '1' ? 'selected' : ''; ?>>✅ Ya</option>
-                    <option value="0" <?php echo ($edit_data['use_cap_presma'] ?? '1') == '0' ? 'selected' : ''; ?>>🚫 Tidak</option>
-                </select>
-            </div>
-        </div>
-
-        <div class="form-group" style="margin-top: 30px;">
-            <button type="submit" class="btn-primary" style="padding: 12px 25px; font-size: 1.1rem; width: 100%;">
-                <i class="fas fa-file-pdf"></i> <?php echo $is_edit ? 'Simpan Perubahan & Cek Arsip' : 'Generate dan Arsipkan Surat'; ?>
+        <div style="margin: 40px 0; text-align: center; animation: slideUp 0.8s ease-out forwards; animation-delay: 0.7s; opacity:0;">
+            <button type="submit" class="btn-primary" style="margin: 0 auto; min-width: 300px;">
+                <i class="fas fa-save"></i> <?php echo $is_edit ? 'Simpan Perubahan' : 'Generate & Arsipkan'; ?>
             </button>
             <?php if($is_edit): ?>
-            <a href="arsip-surat.php?jenis=<?php echo $jenis_surat_val; ?>" style="display:block; text-align:center; margin-top:15px; color:#555;">Kembali ke Daftar Arsip</a>
-            <?php else: ?>
-            <p style="text-align: center; font-size: 0.85rem; color: #666; margin-top: 10px;">
-                Saat di-klik, data otomatis tersimpan di Arsip dan layar akan dialihkan ke halaman Mode Print PDF.
-            </p>
+                <a href="arsip-surat.php" style="display:inline-block; margin-top:20px; color:var(--text-muted); font-size:0.9rem; text-decoration:none;"><i class="fas fa-arrow-left"></i> Kembali ke Arsip</a>
             <?php endif; ?>
         </div>
+    </form>
+</div>
 
-    </div>
-</form>
-
+<!-- JAVASCRIPT -->
 <script>
-// ============================================================
-// Searchable Template Picker Logic
-// ============================================================
+// ========== Template Picker Logic ==========
 function showTplResults(type) {
-    document.getElementById('results-' + type).style.display = 'block';
+    document.querySelectorAll('.tpl-results').forEach(el => el.style.display = 'none');
+    const res = document.getElementById('results-' + type);
+    if(res) res.style.display = 'block';
 }
 
 function filterTpl(type) {
     const input = document.querySelector('#picker-' + type + ' .tpl-search-input');
+    if(!input) return;
     const filter = input.value.toLowerCase();
     const results = document.getElementById('results-' + type);
     const items = results.getElementsByClassName('tpl-item');
     let hasMatch = false;
-
-    for (let i = 0; i < items.length; i++) {
+    for(let i=0;i<items.length;i++) {
         const label = items[i].querySelector('.tpl-item-label').innerText.toLowerCase();
-        const text = items[i].querySelector('.tpl-item-text').innerText.toLowerCase();
-        if (label.includes(filter) || text.includes(filter)) {
+        const text = items[i].querySelector('.tpl-item-text') ? items[i].querySelector('.tpl-item-text').innerText.toLowerCase() : '';
+        if(label.includes(filter) || text.includes(filter)) {
             items[i].style.display = "";
             hasMatch = true;
         } else {
             items[i].style.display = "none";
         }
     }
-
-    // Handle empty results
     let emptyMsg = results.querySelector('.tpl-empty');
-    if (!hasMatch) {
-        if (!emptyMsg) {
+    if(!hasMatch) {
+        if(!emptyMsg) {
             emptyMsg = document.createElement('div');
             emptyMsg.className = 'tpl-empty';
-            emptyMsg.innerText = 'Template tidak ditemukan...';
+            emptyMsg.innerText = 'Tidak ada hasil...';
             results.appendChild(emptyMsg);
         }
-    } else if (emptyMsg) {
+    } else if(emptyMsg) {
         emptyMsg.remove();
     }
 }
@@ -1398,22 +1013,371 @@ function filterTpl(type) {
 function selectTpl(targetId, value, type) {
     document.getElementById(targetId).value = value;
     document.getElementById('results-' + type).style.display = 'none';
-    document.querySelector('#picker-' + type + ' .tpl-search-input').value = '';
-    
-    // Trigger any sync if needed
-    if (typeof syncParagraf === 'function') syncParagraf();
 }
 
-// Close results when clicking outside
+function selectKegiatan(data) {
+    document.getElementById('input_nama_kegiatan').value = data.nama;
+    document.getElementById('kode_kegiatan_input').value = data.kode;
+    document.getElementById('results-kegiatan').style.display = 'none';
+}
+
+function selectSavedPanitia(role, data) {
+    const input = document.querySelector('input[name="panitia_' + role + '"]');
+    if (input) input.value = data.nama.toUpperCase();
+    
+    const modeSel = document.getElementById('ttd_mode_' + role);
+    modeSel.value = 'database';
+    changeTtdMode(role);
+    
+    document.getElementById('ttd_' + role + '_val').value = data.ttd;
+    const previewWrap = document.getElementById('preview_ttd_' + role);
+    const previewImg = document.getElementById('img_preview_' + role);
+    previewWrap.style.display = 'block';
+    
+    // Path untuk TTD tersimpan
+    const uploadBase = '<?php echo uploadUrl(""); ?>';
+    previewImg.src = uploadBase + data.ttd;
+    
+    document.getElementById('results-panitia-' + role).style.display = 'none';
+}
+
+function handleCustomName(role, val) {
+    const modeSel = document.getElementById('ttd_mode_' + role);
+    if (modeSel.value === 'database') {
+        modeSel.value = 'none';
+        changeTtdMode(role);
+    }
+}
+
 document.addEventListener('click', function(e) {
-    ['perihal', 'tujuan'].forEach(type => {
-        const picker = document.getElementById('picker-' + type);
-        const results = document.getElementById('results-' + type);
-        if (picker && !picker.contains(e.target)) {
-            results.style.display = 'none';
+    if (!e.target.closest('.tpl-picker')) {
+        document.querySelectorAll('.tpl-results').forEach(el => el.style.display = 'none');
+    }
+});
+
+// ========== Paragraf Mode ==========
+function toggleModeParagraf() {
+    let tpl = document.getElementById('blok-template');
+    let cust = document.getElementById('blok-custom');
+    let btn = document.getElementById('toggle-mode-btn');
+    if(tpl.style.display !== 'none') {
+        tpl.style.display = 'none';
+        cust.style.display = 'block';
+        btn.innerText = 'Ganti ke Mode Template';
+    } else {
+        tpl.style.display = 'block';
+        cust.style.display = 'none';
+        btn.innerText = 'Ganti ke Mode Custom';
+    }
+}
+
+function execRTE(cmd) {
+    document.getElementById('rte-editor').focus();
+    document.execCommand(cmd, false, null);
+}
+
+function syncRTE() {
+    let html = document.getElementById('rte-editor').innerHTML;
+    document.getElementById('input_tema_kegiatan_val').value = html;
+}
+
+// ========== Drum Picker Class (Preserved) ==========
+class DrumPicker {
+    constructor(elId, values, initVal, onChange) {
+        this.el       = document.getElementById(elId);
+        this.values   = values;
+        this.idx      = Math.max(0, values.indexOf(initVal));
+        this.onChange = onChange;
+        this.ITEM     = 40;
+        this._build();
+        this._bind();
+        this._render(false);
+    }
+    _build() {
+        const hl = document.createElement('div');
+        hl.className = 'drum-highlight';
+        this.el.appendChild(hl);
+        this.inner = document.createElement('div');
+        this.inner.className = 'drum-inner';
+        const pad = () => { const d=document.createElement('div'); d.className='drum-item'; return d; };
+        [0,1,2].forEach(() => this.inner.appendChild(pad()));
+        this.values.forEach((v, i) => {
+            const d = document.createElement('div');
+            d.className = 'drum-item'; d.dataset.i = i; d.textContent = v;
+            this.inner.appendChild(d);
+        });
+        [0,1,2].forEach(() => this.inner.appendChild(pad()));
+        this.el.appendChild(this.inner);
+    }
+    _render(animate = true) {
+        const offset = -56 - this.idx * this.ITEM;
+        this.inner.style.transition = animate ? 'transform 0.18s cubic-bezier(0.25,0.46,0.45,0.94)' : 'none';
+        this.inner.style.transform  = `translateY(${offset}px)`;
+        this.inner.querySelectorAll('[data-i]').forEach(el => {
+            const diff = Math.abs(parseInt(el.dataset.i) - this.idx);
+            const len = this.values.length;
+            const wrapDiff = Math.min(diff, len - diff);
+            el.className = 'drum-item' + (wrapDiff===0?' sel':wrapDiff===1?' near1':wrapDiff===2?' near2':'');
+        });
+        if (this.onChange) setTimeout(() => this.onChange(this.values[this.idx]), 0);
+    }
+    scrollBy(delta) {
+        const oldIdx = this.idx;
+        const len = this.values.length;
+        this.idx = (this.idx + delta) % len;
+        if (this.idx < 0) this.idx += len;
+        this._render(Math.abs(this.idx - oldIdx) <= 1);
+    }
+    _bind() {
+        this.el.addEventListener('wheel', e => { e.preventDefault(); this.scrollBy(e.deltaY > 0 ? 1 : -1); }, { passive: false });
+        let ty = 0;
+        this.el.addEventListener('touchstart', e => { ty = e.touches[0].clientY; }, { passive: true });
+        this.el.addEventListener('touchmove', e => {
+            const d = ty - e.touches[0].clientY;
+            if (Math.abs(d) > 20) { this.scrollBy(d > 0 ? 1 : -1); ty = e.touches[0].clientY; }
+        }, { passive: true });
+    }
+    val() { return this.values[this.idx]; }
+}
+
+const hours = Array.from({length:24}, (_,i) => String(i).padStart(2,'0'));
+const mins  = Array.from({length:60}, (_,i) => String(i).padStart(2,'0'));
+const existingWaktu = document.getElementById('out-waktu').value || '';
+const wParts  = existingWaktu.split(' s.d ');
+const startT  = (wParts[0] || '08.00').replace('.', ':').split(':');
+const isSelesai = !wParts[1] || wParts[1] === 'Selesai';
+const endT    = !isSelesai ? wParts[1].replace('.', ':').split(':') : null;
+
+let drumHS, drumMS, drumHE, drumME, _selesaiMode = isSelesai;
+
+document.addEventListener('DOMContentLoaded', () => {
+    drumHS = new DrumPicker('drum-h-start', hours, startT[0]||'08', updateWaktu);
+    drumMS = new DrumPicker('drum-m-start', mins,  startT[1]||'00', updateWaktu);
+    drumHE = new DrumPicker('drum-h-end',   hours, endT?endT[0]:'17', updateWaktu);
+    drumME = new DrumPicker('drum-m-end',   mins,  endT?endT[1]:'00', updateWaktu);
+    if (isSelesai) applyToggleSelesai(true);
+    
+    // Inisialisasi TTD jika sudah ada (Edit Mode)
+    ['ketua', 'sekretaris'].forEach(role => {
+        const val = document.getElementById('ttd_' + role + '_val').value;
+        if (val) {
+            const previewWrap = document.getElementById('preview_ttd_' + role);
+            const previewImg = document.getElementById('img_preview_' + role);
+            previewWrap.style.display = 'block';
+            if (val.indexOf('data:image') === -1 && val.indexOf('/') !== -1) {
+                previewImg.src = '<?php echo uploadUrl(""); ?>' + val;
+                document.getElementById('ttd_mode_' + role).value = 'database';
+            } else if (val.indexOf('data:image') !== -1) {
+                previewImg.src = val;
+                document.getElementById('ttd_mode_' + role).value = 'draw';
+            }
         }
     });
 });
+
+function updateWaktu() {
+    if (!drumHS || !drumMS || !drumHE || !drumME) return;
+    const start  = drumHS.val() + '.' + drumMS.val();
+    const end    = _selesaiMode ? 'Selesai' : drumHE.val() + '.' + drumME.val();
+    const result = start + ' s.d ' + end;
+    document.getElementById('out-waktu').value   = result;
+    document.getElementById('preview-waktu').innerText = result;
+}
+
+function doToggleSelesai() {
+    _selesaiMode = !_selesaiMode;
+    applyToggleSelesai(_selesaiMode);
+}
+
+function applyToggleSelesai(on) {
+    _selesaiMode = on;
+    const sw   = document.getElementById('ts-switch');
+    const wrap = document.getElementById('toggle-selesai-wrap');
+    const lbl  = document.getElementById('ts-label');
+    const end  = document.getElementById('drum-end-wrap');
+    const knob = sw.querySelector('.toggle-knob');
+    
+    sw.style.background = on ? 'var(--accent-color)' : '#222';
+    knob.style.transform = on ? 'translateX(16px)' : 'translateX(0)';
+    lbl.textContent  = on ? 'Tanpa waktu akhir' : 'Dengan waktu akhir';
+    end.style.opacity       = on ? '0.2' : '1';
+    end.style.pointerEvents = on ? 'none' : '';
+    updateWaktu();
+}
+
+// ========== Tanggal Range ==========
+const HARI_ID  = ['Minggu','Senin','Selasa','Rabu','Kamis',"Jum'at",'Sabtu'];
+const BULAN_ID = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+function formatTanggalRange() {
+    const mulai   = document.getElementById('tgl-mulai').value;
+    const selesai = document.getElementById('tgl-selesai').value;
+    if (!mulai) { document.getElementById('preview-tanggal').innerText = '—belum dipilih—'; return; }
+    const d1 = new Date(mulai + 'T00:00:00');
+    let result = '';
+    if (!selesai || selesai === mulai) {
+        result = HARI_ID[d1.getDay()] + ', ' + d1.getDate() + ' ' + BULAN_ID[d1.getMonth()] + ' ' + d1.getFullYear();
+    } else {
+        const d2 = new Date(selesai + 'T00:00:00');
+        const hari = HARI_ID[d1.getDay()] === HARI_ID[d2.getDay()] ? HARI_ID[d1.getDay()] : HARI_ID[d1.getDay()] + '-' + HARI_ID[d2.getDay()];
+        const bln1 = BULAN_ID[d1.getMonth()], bln2 = BULAN_ID[d2.getMonth()];
+        const tgl  = bln1 === bln2 && d1.getFullYear() === d2.getFullYear()
+            ? d1.getDate() + '-' + d2.getDate() + ' ' + bln1 + ' ' + d1.getFullYear()
+            : d1.getDate() + ' ' + bln1 + ' ' + d1.getFullYear() + ' – ' + d2.getDate() + ' ' + bln2 + ' ' + d2.getFullYear();
+        result = hari + ', ' + tgl;
+    }
+    document.getElementById('out-tanggal').value = result;
+    document.getElementById('preview-tanggal').innerText = result;
+}
+
+// ========== Tanda Tangan Logic ==========
+const sigPads = {};
+function changeTtdMode(role) {
+    const mode = document.getElementById('ttd_mode_' + role).value;
+    document.getElementById('wrap_canvas_' + role).style.display = mode === 'draw' ? 'block' : 'none';
+    document.getElementById('wrap_upload_' + role).style.display = mode === 'upload' ? 'block' : 'none';
+    if (mode === 'none') {
+        document.getElementById('ttd_' + role + '_val').value = '';
+        document.getElementById('preview_ttd_' + role).style.display = 'none';
+    } else if (mode === 'draw') {
+        initSignaturePad(role);
+    }
+}
+
+function handleTtdUpload(role, input) {
+    if (input.files && input.files[0]) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const res = e.target.result;
+            document.getElementById('ttd_' + role + '_val').value = res;
+            document.getElementById('preview_ttd_' + role).style.display = 'block';
+            document.getElementById('img_preview_' + role).src = res;
+        };
+        reader.readAsDataURL(input.files[0]);
+    }
+}
+
+function initSignaturePad(role) {
+    const canvas = document.getElementById('pad_' + role);
+    if(!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let isDrawing = false;
+    sigPads[role] = { canvas, ctx };
+    
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#02183b';
+
+    function getPos(e) {
+        const r = canvas.getBoundingClientRect();
+        let cx = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
+        let cy = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
+        return { x: (cx - r.left) * (canvas.width / r.width), y: (cy - r.top) * (canvas.height / r.height) };
+    }
+
+    function start(e) { e.preventDefault(); isDrawing = true; const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); }
+    function draw(e) { if (!isDrawing) return; e.preventDefault(); const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); }
+    function end() { if (isDrawing) { isDrawing = false; const url = canvas.toDataURL('image/png'); document.getElementById('ttd_' + role + '_val').value = url; document.getElementById('preview_ttd_' + role).style.display = 'block'; document.getElementById('img_preview_' + role).src = url; } }
+
+    canvas.addEventListener('mousedown', start);
+    canvas.addEventListener('mousemove', draw);
+    window.addEventListener('mouseup', end);
+    canvas.addEventListener('touchstart', start);
+    canvas.addEventListener('touchmove', draw);
+    window.addEventListener('touchend', end);
+}
+
+function clearPad(role) {
+    if(sigPads[role]) {
+        sigPads[role].ctx.clearRect(0, 0, sigPads[role].canvas.width, sigPads[role].canvas.height);
+        document.getElementById('ttd_' + role + '_val').value = '';
+    }
+}
+
+// ========== Lampiran Upload Logic (Advanced) ==========
+const dropZone = document.getElementById('lampiran_drop_zone');
+const fileInput = document.getElementById('lampiran_upload');
+const previewList = document.getElementById('file-list-preview');
+const deletedExistingInput = document.getElementById('deleted_existing_files');
+
+let newFiles = []; // Array untuk menampung file baru yang dipilih
+
+if (dropZone && fileInput) {
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', (e) => {
+        const added = Array.from(e.target.files);
+        // Tambahkan file baru ke array (hindari duplikat nama & ukuran jika perlu)
+        newFiles = [...newFiles, ...added];
+        updateFilesAndPreview();
+    });
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = 'var(--accent-color)';
+        dropZone.style.background = 'rgba(74, 144, 226, 0.1)';
+    });
+
+    ['dragleave', 'drop'].forEach(evt => {
+        dropZone.addEventListener(evt, () => {
+            dropZone.style.borderColor = 'var(--border-color)';
+            dropZone.style.background = 'rgba(0,0,0,0.1)';
+        });
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const added = Array.from(e.dataTransfer.files).filter(f => f.type === 'application/pdf');
+        if (added.length > 0) {
+            newFiles = [...newFiles, ...added];
+            updateFilesAndPreview();
+        }
+    });
+}
+
+function updateFilesAndPreview() {
+    // Rebuild FileList untuk input file agar terkirim saat submit
+    const dt = new DataTransfer();
+    newFiles.forEach(file => dt.items.add(file));
+    fileInput.files = dt.files;
+
+    // Render Preview
+    previewList.innerHTML = '';
+    if (newFiles.length > 0) {
+        const header = document.createElement('div');
+        header.style = "font-size: 0.75rem; color: #777; margin-bottom: 8px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;";
+        header.innerText = 'File Baru yang akan diupload:';
+        previewList.appendChild(header);
+        
+        newFiles.forEach((file, index) => {
+            const item = document.createElement('div');
+            item.className = 'preview-bar';
+            item.style = "margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; animation: slideUp 0.3s ease-out;";
+            item.innerHTML = `
+                <span><i class="fas fa-file-pdf" style="color:#e74c3c;"></i> ${file.name} (${(file.size/1024).toFixed(1)} KB)</span>
+                <button type="button" onclick="removeNewFile(${index})" style="background:none; border:none; color:#e74c3c; cursor:pointer; font-size:1rem;"><i class="fas fa-times"></i></button>
+            `;
+            previewList.appendChild(item);
+        });
+    }
+}
+
+function removeNewFile(index) {
+    newFiles.splice(index, 1);
+    updateFilesAndPreview();
+}
+
+function removeExistingFile(filePath, elementId) {
+    if (confirm('Hapus lampiran yang sudah tersimpan?')) {
+        const currentDeleted = deletedExistingInput.value ? deletedExistingInput.value.split(',') : [];
+        currentDeleted.push(filePath);
+        deletedExistingInput.value = currentDeleted.join(',');
+        
+        const el = document.getElementById(elementId);
+        if (el) el.style.display = 'none';
+    }
+}
+
+document.querySelector('form').addEventListener('submit', syncRTE);
 </script>
 
 <?php require_once __DIR__ . '/footer.php'; ?>

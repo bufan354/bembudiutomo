@@ -44,14 +44,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'tamba
         $nama       = sanitizeText($_POST['nama']  ?? '', 100);
         $emailRaw   = sanitizeText($_POST['email'] ?? '', 100);
         $email      = filter_var($emailRaw, FILTER_VALIDATE_EMAIL) ? $emailRaw : '';
-        $role       = in_array($_POST['role'] ?? '', ['admin','superadmin','sekretaris']) ? $_POST['role'] : 'admin';
+        
+        $roleInput  = strtolower($_POST['role'] ?? 'admin');
+        // Normalisasi ejaan sekretaris
+        if ($roleInput === 'sekertaris' || $roleInput === 'sekretaris') {
+            $role = 'sekretaris';
+        } else {
+            $role = in_array($roleInput, ['admin','superadmin']) ? $roleInput : 'admin';
+        }
+
         $periode_id = !empty($_POST['periode_id']) ? (int)$_POST['periode_id'] : null;
         $can_access_all = ($role === 'superadmin') ? 1 : 0;
 
         if (empty($username) || empty($password) || empty($nama)) {
             $error = 'Username, password, dan nama wajib diisi!';
-        } elseif ($role === 'admin' && !$periode_id) {
-            $error = 'Pilih periode untuk admin biasa!';
+        } elseif (($role === 'admin' || $role === 'sekretaris') && !$periode_id) {
+            $error = 'Pilih periode untuk admin/sekretaris!';
         } elseif (strlen($password) < 8) {
             $error = 'Password minimal 8 karakter!';
         } else {
@@ -125,22 +133,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'hapus
         } elseif ($id > 0) {
             dbBeginTransaction();
             try {
-                dbQuery("UPDATE struktur_bph SET created_by = NULL WHERE created_by = ?", [$id], "i");
-                dbQuery("UPDATE anggota_bph SET created_by = NULL WHERE created_by = ?", [$id], "i");
-                dbQuery("UPDATE kementerian SET created_by = NULL WHERE created_by = ?", [$id], "i");
-                dbQuery("UPDATE anggota_kementerian SET created_by = NULL WHERE created_by = ?", [$id], "i");
-                dbQuery("UPDATE struktur_organisasi SET created_by = NULL WHERE created_by = ?", [$id], "i");
-                // Hapus sesi aktif admin ini
-                dbQuery("DELETE FROM user_sessions WHERE user_id = ?", [$id], "i");
+                // Matikan cek foreign key sementara agar tidak macet
+                dbQuery("SET FOREIGN_KEY_CHECKS = 0");
+
+                $existingTables = [];
+                $res = dbFetchAll("SHOW TABLES");
+                foreach ($res as $r) { $existingTables[] = reset($r); }
+
+                // 1. Bersihkan referensi created_by di tabel yang memilikinya
+                $created_by_tables = [
+                    'anggota_bph', 'kementerian', 'anggota_kementerian', 
+                    'struktur_organisasi', 'berita', 'arsip_surat', 'short_links'
+                ];
+                foreach ($created_by_tables as $table) {
+                    if (in_array($table, $existingTables)) {
+                        try {
+                            dbQuery("UPDATE `$table` SET created_by = NULL WHERE created_by = ?", [$id], "i");
+                        } catch (Exception $e) {
+                            // Abaikan jika error kolom tidak ada, lanjut ke tabel berikutnya
+                            continue;
+                        }
+                    }
+                }
+                
+                // 2. Bersihkan referensi updated_by di tabel yang memilikinya
+                $updated_by_tables = ['struktur_organisasi'];
+                foreach ($updated_by_tables as $table) {
+                    if (in_array($table, $existingTables)) {
+                        try {
+                            dbQuery("UPDATE `$table` SET updated_by = NULL WHERE updated_by = ?", [$id], "i");
+                        } catch (Exception $e) {
+                            continue;
+                        }
+                    }
+                }
+
+                // 3. Hapus data terkait di tabel user_id
+                $user_id_tables = ['user_sessions', 'audit_log', 'signatures', 'notifikasi'];
+                foreach ($user_id_tables as $table) {
+                    if (in_array($table, $existingTables)) {
+                        try {
+                            dbQuery("DELETE FROM `$table` WHERE user_id = ?", [$id], "i");
+                        } catch (Exception $e) {
+                            continue;
+                        }
+                    }
+                }
+
+                // 4. Baru hapus user-nya
                 dbQuery("DELETE FROM users WHERE id = ?", [$id], "i");
+                
+                // Hidupkan kembali cek foreign key
+                dbQuery("SET FOREIGN_KEY_CHECKS = 1");
+                
                 dbCommit();
                 auditLog('DELETE', 'users', $id, 'Hapus admin ID: ' . $id);
-                redirect('admin/kelola-admin.php', 'Admin berhasil dihapus!', 'success');
+                redirect('admin/kelola-admin.php', 'Admin berhasil dihapus secara permanen!', 'success');
                 exit();
             } catch (Exception $e) {
                 dbRollback();
-                error_log("[KELOLA-ADMIN] Hapus: " . $e->getMessage());
-                $error = 'Gagal menghapus admin.';
+                dbQuery("SET FOREIGN_KEY_CHECKS = 1");
+                $error = 'Gagal menghapus admin: ' . $e->getMessage();
             }
         }
     }
@@ -197,6 +250,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'toggl
                     'success');
                 exit();
             }
+        }
+    }
+}
+
+// ============================================
+// PROSES UBAH ROLE
+// ============================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ubah_role') {
+    if (!csrfVerify()) {
+        $error = 'Request tidak valid.';
+    } else {
+        $id         = (int) ($_POST['id'] ?? 0);
+        $newRole    = in_array($_POST['new_role'] ?? '', ['admin','superadmin','sekretaris']) ? $_POST['new_role'] : 'admin';
+        $newPeriode = !empty($_POST['new_periode']) ? (int)$_POST['new_periode'] : null;
+        
+        if ($id === (int)$_SESSION['admin_id'] && $newRole !== 'superadmin') {
+            $error = 'Jangan turunkan pangkat diri sendiri!';
+        } elseif (($newRole === 'admin' || $newRole === 'sekretaris') && !$newPeriode) {
+            $error = 'Admin/Sekretaris wajib dikaitkan dengan satu periode!';
+        } elseif ($id > 0) {
+            // Jika superadmin, periode bisa dikosongkan (akses semua)
+            if ($newRole === 'superadmin') $newPeriode = null;
+            
+            dbQuery("UPDATE users SET role = ?, periode_id = ? WHERE id = ?", [$newRole, $newPeriode, $id], "sii");
+            auditLog('UPDATE', 'users', $id, 'Ubah role/periode admin ID ' . $id . ' menjadi ' . $newRole . ' (Periode: ' . ($newPeriode ?? 'Semua') . ')');
+            redirect('admin/kelola-admin.php', 'Peran dan Periode admin berhasil diperbarui!', 'success');
+            exit();
         }
     }
 }
@@ -327,7 +407,7 @@ if (isset($_SESSION['flash'])) {
                 <div class="form-group" style="background:rgba(74,144,226,.08);border:1px solid rgba(74,144,226,.3);border-radius:8px;padding:1rem;">
                     <label style="margin-bottom: 5px; color:#4A90E2;"><i class="fas fa-shield-alt"></i> Pengaturan Keamanan</label>
                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                        <input type="checkbox" name="enable_2fa" value="1" checked> <strong>Aktifkan 2FA Langsung</strong>
+                        <input type="checkbox" name="enable_2fa" value="1"> <strong>Aktifkan 2FA Langsung</strong>
                     </label>
                     <small style="display:block; margin-top:5px; color:#8BB9F0;">Jika dicentang, sistem akan men-generate Secret Key & QR Code saat akun dibuat. Lepas centang jika Admin ingin menyetel 2FA-nya sendiri nanti secara mandiri di profilnya.</small>
                 </div>
@@ -380,11 +460,15 @@ if (isset($_SESSION['flash'])) {
                                 </td>
                                 <td><?php echo htmlspecialchars($admin['nama']); ?></td>
                                 <td>
-                                    <?php if ($admin['role'] === 'superadmin' || $admin['can_access_all']): ?>
+                                    <?php 
+                                    $roleVal = strtolower($admin['role'] ?? '');
+                                    $isRowSekretaris = (strpos($roleVal, 'sekretaris') !== false || strpos($roleVal, 'sekertaris') !== false);
+                                    
+                                    if ($roleVal === 'superadmin' || $admin['can_access_all']): ?>
                                         <span class="badge" style="background:gold;color:black;">
                                             <i class="fas fa-crown"></i> Superadmin
                                         </span>
-                                    <?php elseif ($admin['role'] === 'sekretaris'): ?>
+                                    <?php elseif ($isRowSekretaris): ?>
                                         <span class="badge" style="background:#2E7D32;color:white;">
                                             <i class="fas fa-file-signature"></i> Sekretaris
                                         </span>
@@ -422,41 +506,32 @@ if (isset($_SESSION['flash'])) {
                                 <td style="text-align:center;">
                                     <?php if (!$isSelf): ?>
                                     <div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap;">
+                                        <!-- Ubah Role -->
+                                        <button type="button" class="btn-edit" title="Ubah Role" style="background:#673AB7;"
+                                                onclick='handleAdminAction(<?php echo $adminId; ?>, "ubah_role", <?php echo json_encode($admin["username"]); ?>, 0, <?php echo json_encode($admin["role"]); ?>, <?php echo (int)($admin["periode_id"] ?? 0); ?>)'>
+                                            <i class="fas fa-user-tag"></i>
+                                        </button>
+
                                         <!-- Reset Password -->
-                                        <form method="POST" style="display:inline;" onsubmit="return konfirmasiResetPw(this)">
-                                            <?php echo csrfField(); ?>
-                                            <input type="hidden" name="action" value="reset_password">
-                                            <input type="hidden" name="id" value="<?php echo $adminId; ?>">
-                                            <input type="hidden" name="new_password" id="pw_<?php echo $adminId; ?>" value="">
-                                            <button type="submit" class="btn-edit" title="Reset Password">
-                                                <i class="fas fa-key"></i>
-                                            </button>
-                                        </form>
+                                        <button type="button" class="btn-edit" title="Reset Password"
+                                                onclick='handleAdminAction(<?php echo $adminId; ?>, "reset_password", <?php echo json_encode($admin["username"]); ?>)'>
+                                            <i class="fas fa-key"></i>
+                                        </button>
 
                                         <!-- Toggle Aktif/Nonaktif -->
-                                        <form method="POST" style="display:inline;"
-                                              onsubmit="return confirm('<?php echo (int)($admin['is_active'] ?? 0) ? 'Nonaktifkan' : 'Aktifkan kembali'; ?> akun <?php echo htmlspecialchars(addslashes($admin['username'])); ?>?')">
-                                            <?php echo csrfField(); ?>
-                                            <input type="hidden" name="action" value="toggle_aktif">
-                                            <input type="hidden" name="id" value="<?php echo $adminId; ?>">
-                                            <button type="submit"
-                                                    class="btn-edit"
-                                                    title="<?php echo (int)($admin['is_active'] ?? 0) ? 'Nonaktifkan' : 'Aktifkan'; ?>"
-                                                    style="background:<?php echo (int)($admin['is_active'] ?? 0) ? '#f44336' : '#4caf50'; ?>;">
-                                                <i class="fas <?php echo (int)($admin['is_active'] ?? 0) ? 'fa-ban' : 'fa-check'; ?>"></i>
-                                            </button>
-                                        </form>
+                                        <button type="button"
+                                                class="btn-edit"
+                                                title="<?php echo (int)($admin['is_active'] ?? 0) ? 'Nonaktifkan' : 'Aktifkan'; ?>"
+                                                style="background:<?php echo (int)($admin['is_active'] ?? 0) ? '#f44336' : '#4caf50'; ?>;"
+                                                onclick='handleAdminAction(<?php echo $adminId; ?>, "toggle_aktif", <?php echo json_encode($admin["username"]); ?>, <?php echo (int)($admin['is_active'] ?? 0); ?>)'>
+                                            <i class="fas <?php echo (int)($admin['is_active'] ?? 0) ? 'fa-ban' : 'fa-check'; ?>"></i>
+                                        </button>
 
                                         <!-- Hapus -->
-                                        <form method="POST" style="display:inline;"
-                                              onsubmit="return confirm('Yakin hapus admin <?php echo htmlspecialchars(addslashes($admin['username'])); ?>?')">
-                                            <?php echo csrfField(); ?>
-                                            <input type="hidden" name="action" value="hapus">
-                                            <input type="hidden" name="id" value="<?php echo $adminId; ?>">
-                                            <button type="submit" class="btn-delete" title="Hapus Admin">
-                                                <i class="fas fa-trash"></i>
-                                            </button>
-                                        </form>
+                                        <button type="button" class="btn-delete" title="Hapus Admin"
+                                                onclick='handleAdminAction(<?php echo $adminId; ?>, "hapus", <?php echo json_encode($admin["username"]); ?>)'>
+                                            <i class="fas fa-trash"></i>
+                                        </button>
                                     </div>
                                     <?php else: ?>
                                         <span style="color:#666;font-size:.8rem;">(Akun sendiri)</span>
@@ -514,76 +589,263 @@ if (isset($_SESSION['flash'])) {
     </div>
 </div>
 
+<!-- Hidden form untuk aksi admin -->
+<form id="actionForm" method="POST" style="display:none;">
+    <?php echo csrfField(); ?>
+    <input type="hidden" name="action" id="actionInput">
+    <input type="hidden" name="id" id="idInput">
+    <input type="hidden" name="new_password" id="pwInput">
+    <input type="hidden" name="new_role" id="roleInput">
+    <input type="hidden" name="new_periode" id="periodeInput">
+</form>
+
+<!-- Modal Konfirmasi Custom -->
+<div id="confirmModal" class="custom-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <i class="fas fa-exclamation-triangle"></i>
+            <h4 id="modalTitle">Konfirmasi Aksi</h4>
+        </div>
+        <div class="modal-body">
+            <p id="modalMessage">Apakah Anda yakin ingin melakukan aksi ini?</p>
+            
+            <div id="passwordInputArea" style="display:none; margin-top:15px;">
+                <label style="display:block; margin-bottom:5px; font-size:0.9rem;">Password Baru:</label>
+                <input type="text" id="customNewPw" class="form-control" placeholder="Minimal 8 karakter">
+            </div>
+
+            <div id="roleInputArea" style="display:none; margin-top:15px;">
+                <div class="form-group" style="margin-bottom:15px;">
+                    <label style="display:block; margin-bottom:5px; font-size:0.9rem;">Pilih Role Baru:</label>
+                    <select id="customNewRole" class="form-control" onchange="toggleModalPeriode(this.value)">
+                        <option value="admin">Admin Biasa</option>
+                        <option value="sekretaris">Sekretaris</option>
+                        <option value="superadmin">Superadmin</option>
+                    </select>
+                </div>
+                <div class="form-group" id="modalPeriodeGroup" style="display:none;">
+                    <label style="display:block; margin-bottom:5px; font-size:0.9rem;">Tugaskan ke Periode:</label>
+                    <select id="customNewPeriode" class="form-control">
+                        <option value="">-- Pilih Periode --</option>
+                        <?php foreach ($periode_list as $p): ?>
+                            <option value="<?php echo (int)$p['id']; ?>">
+                                <?php echo htmlspecialchars($p['nama']); ?> (<?php echo $p['tahun_mulai']; ?>/<?php echo $p['tahun_selesai']; ?>)
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-modal-cancel" onclick="closeConfirmModal()">Batal</button>
+            <button type="button" class="btn-modal-confirm" id="confirmBtn">Ya, Lanjutkan</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.custom-modal {
+    display: none;
+    position: fixed;
+    z-index: 9999;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.7);
+    backdrop-filter: blur(4px);
+    align-items: center;
+    justify-content: center;
+}
+.modal-content {
+    background: #222;
+    border: 1px solid #444;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 400px;
+    padding: 25px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+    animation: modalSlide 0.3s ease-out;
+}
+@keyframes modalSlide {
+    from { transform: translateY(-30px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+.modal-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 15px;
+    color: #ffc107;
+}
+.modal-header h4 { margin: 0; font-size: 1.2rem; }
+.modal-body p { color: #ccc; line-height: 1.5; margin: 0; }
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 25px;
+}
+.btn-modal-cancel {
+    background: #444;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+}
+.btn-modal-confirm {
+    background: #f44336;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+}
+.btn-modal-confirm:hover { background: #d32f2f; }
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
-function togglePeriodeField() {
-    const role = document.getElementById('roleSelect').value;
-    document.getElementById('periodeField').style.display = role === 'superadmin' ? 'none' : 'block';
+var pendingAction = null;
+
+function closeConfirmModal() {
+    document.getElementById('confirmModal').style.display = 'none';
+    pendingAction = null;
 }
 
-function konfirmasiResetPw(form) {
-    const pw = prompt('Masukkan password baru (minimal 8 karakter):');
-    if (!pw) return false;
-    if (pw.length < 8) { alert('Password minimal 8 karakter!'); return false; }
-    form.querySelector('input[name="new_password"]').value = pw;
-    return confirm('Reset password sekarang?');
+function toggleModalPeriode(role) {
+    var group = document.getElementById('modalPeriodeGroup');
+    if (role === 'admin' || role === 'sekretaris') {
+        group.style.display = 'block';
+    } else {
+        group.style.display = 'none';
+    }
+}
+
+window.handleAdminAction = function(id, action, username, isActive, currentRole, currentPeriode) {
+    pendingAction = { id: id, action: action, username: username, isActive: isActive, currentRole: currentRole, currentPeriode: currentPeriode };
+    
+    var modal = document.getElementById('confirmModal');
+    var modalTitle = document.getElementById('modalTitle');
+    var modalMessage = document.getElementById('modalMessage');
+    var confirmBtn = document.getElementById('confirmBtn');
+    var pwArea = document.getElementById('passwordInputArea');
+    var roleArea = document.getElementById('roleInputArea');
+    
+    pwArea.style.display = 'none';
+    roleArea.style.display = 'none';
+    confirmBtn.style.background = '#f44336';
+    modalTitle.innerHTML = 'Konfirmasi Aksi';
+
+    if (action === 'reset_password') {
+        modalTitle.innerHTML = 'Reset Password';
+        modalMessage.innerHTML = 'Masukkan password baru untuk admin <b>' + username + '</b>:';
+        pwArea.style.display = 'block';
+        confirmBtn.style.background = '#4A90E2';
+    } else if (action === 'ubah_role') {
+        modalTitle.innerHTML = 'Ubah Role Admin';
+        modalMessage.innerHTML = 'Ubah peran untuk akun <b>' + username + '</b>:';
+        roleArea.style.display = 'block';
+        confirmBtn.style.background = '#673AB7';
+        
+        if (currentRole) {
+            document.getElementById('customNewRole').value = currentRole;
+            toggleModalPeriode(currentRole);
+        }
+        if (currentPeriode) {
+            document.getElementById('customNewPeriode').value = currentPeriode;
+        }
+    } else if (action === 'toggle_aktif') {
+        var msg = (isActive == 1) ? 'menonaktifkan' : 'mengaktifkan kembali';
+        modalMessage.innerHTML = 'Apakah Anda yakin ingin ' + msg + ' akun <b>' + username + '</b>?';
+        confirmBtn.style.background = (isActive == 1) ? '#f44336' : '#4caf50';
+    } else if (action === 'hapus') {
+        modalMessage.innerHTML = 'PERINGATAN: Akun <b>' + username + '</b> akan dihapus secara permanen. Tindakan ini tidak dapat dibatalkan!';
+    }
+
+    modal.style.display = 'flex';
+};
+
+document.getElementById('confirmBtn').addEventListener('click', function() {
+    if (!pendingAction) return;
+
+    var actionForm = document.getElementById('actionForm');
+    var actionInput = document.getElementById('actionInput');
+    var idInput = document.getElementById('idInput');
+    var pwInput = document.getElementById('pwInput');
+    var roleInput = document.getElementById('roleInput');
+    var periodeInput = document.getElementById('periodeInput');
+    var customNewPw = document.getElementById('customNewPw');
+    var customNewRole = document.getElementById('customNewRole');
+    var customNewPeriode = document.getElementById('customNewPeriode');
+
+    idInput.value = pendingAction.id;
+    actionInput.value = pendingAction.action;
+
+    if (pendingAction.action === 'reset_password') {
+        if (customNewPw.value.length < 8) {
+            alert('Password minimal 8 karakter!');
+            return;
+        }
+        pwInput.value = customNewPw.value;
+    }
+
+    if (pendingAction.action === 'ubah_role') {
+        roleInput.value = customNewRole.value;
+        periodeInput.value = customNewPeriode.value;
+        if ((roleInput.value === 'admin' || roleInput.value === 'sekretaris') && !periodeInput.value) {
+            alert('Pilih periode untuk admin/sekretaris!');
+            return;
+        }
+    }
+
+    console.log("Submitting form for action:", pendingAction.action);
+    actionForm.submit();
+});
+
+function togglePeriodeField() {
+    var roleSelect = document.getElementById('roleSelect');
+    var periodeField = document.getElementById('periodeField');
+    if (roleSelect && periodeField) {
+        periodeField.style.display = roleSelect.value === 'superadmin' ? 'none' : 'block';
+    }
 }
 
 document.addEventListener('DOMContentLoaded', function() {
     togglePeriodeField();
-});
 
-document.getElementById('formTambah')?.addEventListener('submit', function(e) {
-    const role = document.getElementById('roleSelect').value;
-    const periodeId = document.querySelector('select[name="periode_id"]').value;
-    // admin dan sekretaris WAJIB pilih periode
-    if ((role === 'admin' || role === 'sekretaris') && !periodeId) {
-        e.preventDefault();
-        alert('Pilih periode untuk admin/sekretaris!');
-    }
-});
-</script>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script>
-document.addEventListener("DOMContentLoaded", function() {
-    var qrContainer = document.getElementById("qrcode");
-    if(qrContainer) {
-        var qrContent = <?php echo json_encode($newAdminQrUrl ?? ''); ?>;
-        if(qrContent) {
-            new QRCode(qrContainer, {
-                text: qrContent,
-                width: 180,
-                height: 180,
-                colorDark : "#000000",
-                colorLight : "#ffffff",
-                correctLevel : QRCode.CorrectLevel.M
-            });
-
-            document.getElementById('downloadQrBtn').addEventListener('click', function() {
-                var canvas = qrContainer.querySelector("canvas");
-                if(canvas) {
-                    var url = canvas.toDataURL("image/png");
-                    var a = document.createElement("a");
-                    a.href = url;
-                    a.download = "BEM_Admin_2FA_<?php echo htmlspecialchars($newAdminUsername ?? '', ENT_QUOTES, 'UTF-8'); ?>.png";
-                    a.click();
-                } else {
-                    alert("QR Code belum siap didownload.");
-                }
-            });
+    var formTambah = document.getElementById('formTambah');
+    if (formTambah) {
+        formTambah.addEventListener('submit', function(e) {
+            var roleSelect = document.getElementById('roleSelect');
+            var role = roleSelect ? roleSelect.value : '';
+            var selectPeriode = document.querySelector('select[name="periode_id"]');
+            var periodeId = selectPeriode ? selectPeriode.value : '';
             
-            document.getElementById('copySecretBtn').addEventListener('click', function() {
-                var text = "<?php echo htmlspecialchars(strtoupper($newAdminSecret ?? ''), ENT_QUOTES, 'UTF-8'); ?>";
-                if (navigator.clipboard) {
-                    navigator.clipboard.writeText(text).then(function() {
-                        var btn = document.getElementById('copySecretBtn');
-                        btn.innerHTML = '<i class="fas fa-check"></i>';
-                        setTimeout(function(){ btn.innerHTML = '<i class="fas fa-copy"></i>'; }, 2000);
-                    });
-                } else {
-                    alert("Fitur copy otomatis tidak didukung di browser ini.");
-                }
-            });
+            if ((role === 'admin' || role === 'sekretaris') && !periodeId) {
+                e.preventDefault();
+                alert('Pilih periode untuk admin/sekretaris!');
+            }
+        });
+    }
+
+    var qrContainer = document.getElementById("qrcode");
+    if (qrContainer && typeof QRCode !== 'undefined') {
+        var qrContent = <?php echo json_encode($newAdminQrUrl ?? ''); ?>;
+        if (qrContent) {
+            try {
+                new QRCode(qrContainer, {
+                    text: qrContent,
+                    width: 180,
+                    height: 180,
+                    colorDark : "#000000",
+                    colorLight : "#ffffff",
+                    correctLevel : QRCode.Level.M
+                });
+            } catch (err) {}
         }
     }
 });

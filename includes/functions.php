@@ -700,7 +700,12 @@ function auditLog(string $action, ?string $targetTable = null, ?int $targetId = 
 
     if (rand(1, 100) === 1) {
         try {
-            dbQuery("DELETE FROM audit_log WHERE created_at < now() - INTERVAL '30 days'");
+            // Pembersihan berkala (Audit log > 30 hari) - Hybrid Syntax
+            $isMysql = (defined('DB_DRIVER') && DB_DRIVER === 'mysql') || (isset($GLOBALS['db_driver']) && $GLOBALS['db_driver'] === 'mysql');
+            if (function_exists('dbGetDriver')) { $isMysql = (dbGetDriver() === 'mysql'); }
+            
+            $cleanupSql = $isMysql ? "NOW() - INTERVAL 30 DAY" : "now() - INTERVAL '30 days'";
+            dbQuery("DELETE FROM audit_log WHERE created_at < $cleanupSql");
         } catch (Exception $e) {
             error_log("auditLog cleanup: " . $e->getMessage());
         }

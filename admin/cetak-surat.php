@@ -1,5 +1,10 @@
 <?php
 // admin/cetak-surat.php
+// Force No-Cache (Critical for InfinityFree)
+header("Cache-Control: no-cache, no-store, must-revalidate, max-age=0");
+header("Pragma: no-cache");
+header("Expires: Wed, 11 Jan 1984 05:00:00 GMT");
+
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/config.php';
 
@@ -39,12 +44,28 @@ if (isset($BULK_PENGATURAN)) {
     }
 }
 
+// Ambil Data Lampiran Internal (Peminjaman Barang) jika ada
+$internal_data = [];
+if (!empty($konten['lampiran_internal_ids'])) {
+    $ids = (array)$konten['lampiran_internal_ids'];
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $internal_data = dbFetchAll("SELECT * FROM lampiran_pinjam WHERE id IN ($placeholders) AND periode_id = ?", array_merge($ids, [$periode_id]));
+}
+
+// Generate Dynamic Filename
+$f_perihal = strtoupper($surat['perihal']);
+$parts = explode('/', $surat['nomor_surat']);
+$f_kode = strtoupper($parts[2] ?? '');
+$f_tujuan = strtoupper(trim(explode("\n", $surat['tujuan'])[0]));
+$f_tahun = end($parts) ?: date('Y');
+$download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
 ?>
+
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>Cetak Surat - <?php echo htmlspecialchars($surat['nomor_surat']); ?></title>
+    <title><?php echo htmlspecialchars($download_name); ?></title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         /* Reset & Setup Kertas A4 */
@@ -199,7 +220,7 @@ if (isset($BULK_PENGATURAN)) {
 
     <?php if (!isset($_GET['bulk'])): ?>
     <div class="no-print">
-        <button onclick="window.print()" class="btn"><i class="fas fa-print"></i> Cetak Dokumen</button>
+        <button onclick="safePrint()" class="btn"><i class="fas fa-print"></i> Cetak Dokumen</button>
         <button onclick="exportWord()" class="btn" style="background:#27ae60;"><i class="fas fa-file-word"></i> Download Word</button>
         <a href="arsip-surat.php" class="btn btn-warning"><i class="fas fa-arrow-left"></i> Kembali ke Arsip</a>
     </div>
@@ -252,7 +273,9 @@ if (isset($BULK_PENGATURAN)) {
                 <td class="col-titik">:</td>
                 <td>
                     <?php 
-                    $jml_lampiran = !empty($konten['lampiran_files']) ? count($konten['lampiran_files']) : 0;
+                    $cnt_pdf = !empty($konten['lampiran_files']) ? count($konten['lampiran_files']) : 0;
+                    $cnt_int = !empty($konten['lampiran_internal_ids']) ? count($konten['lampiran_internal_ids']) : 0;
+                    $jml_lampiran = $cnt_pdf + $cnt_int;
                     echo $jml_lampiran > 0 ? $jml_lampiran : '-';
                     ?>
                 </td>
@@ -369,6 +392,13 @@ if (isset($BULK_PENGATURAN)) {
             $parts = explode('/', $surat['nomor_surat']);
             if (isset($parts[2])) $kode_keg = $parts[2];
             $nama_panitia = !empty($konten['nama_kegiatan']) ? $konten['nama_kegiatan'] : $kode_keg;
+
+            // Helper untuk deteksi TTD (Base64 vs File)
+            function renderTTD($val) {
+                if (empty($val)) return '';
+                if (strpos($val, 'data:image') !== false) return htmlspecialchars($val);
+                return uploadUrl($val);
+            }
             ?>
             <div class="ttd-title">PANITIA PELAKSANA <?php echo strtoupper(htmlspecialchars($nama_panitia)); ?></div>
             
@@ -380,14 +410,14 @@ if (isset($BULK_PENGATURAN)) {
                             <img src="<?php echo uploadUrl($pengaturan['cap_panitia_image']); ?>" style="position:absolute; top:20px; left:100%; transform:translateX(-50%); max-width:190px; max-height:95px; mix-blend-mode:multiply; pointer-events:none; opacity:0.85; z-index:2;">
                         <?php endif; ?>
                         <?php if(!empty($konten['panitia_ketua_ttd'])): ?>
-                            <img src="<?php echo htmlspecialchars($konten['panitia_ketua_ttd']); ?>" style="position:absolute; top:15px; left:50%; transform:translateX(-50%); max-height:80px; mix-blend-mode:multiply; pointer-events:none;">
+                            <img src="<?php echo renderTTD($konten['panitia_ketua_ttd']); ?>" style="position:absolute; top:15px; left:50%; transform:translateX(-50%); max-height:80px; mix-blend-mode:multiply; pointer-events:none;">
                         <?php endif; ?>
                         <div class="ttd-name"><?php echo htmlspecialchars($konten['panitia_ketua'] ?? ''); ?></div>
                     </td>
                     <td style="position:relative;">
                         Sekretaris
                         <?php if(!empty($konten['panitia_sekretaris_ttd'])): ?>
-                            <img src="<?php echo htmlspecialchars($konten['panitia_sekretaris_ttd']); ?>" style="position:absolute; top:15px; left:50%; transform:translateX(-50%); max-height:80px; mix-blend-mode:multiply; pointer-events:none;">
+                            <img src="<?php echo renderTTD($konten['panitia_sekretaris_ttd']); ?>" style="position:absolute; top:15px; left:50%; transform:translateX(-50%); max-height:80px; mix-blend-mode:multiply; pointer-events:none;">
                         <?php endif; ?>
                         <div class="ttd-name"><?php echo htmlspecialchars($konten['panitia_sekretaris'] ?? ''); ?></div>
                     </td>
@@ -426,19 +456,142 @@ if (isset($BULK_PENGATURAN)) {
 
     </div>
 
+    <!-- RENDER LAMPIRAN INTERNAL (DATA DARI DATABASE) -->
+    <?php if (!empty($internal_data)): ?>
+        <?php foreach($internal_data as $idx_int => $data_int): 
+            $barang_list = json_decode($data_int['barang_json'], true) ?: [];
+        ?>
+        <div class="page" style="margin-top: 10mm; page-break-before: always; position: relative;">
+            <div style="text-align: left; font-size: 12pt; margin-bottom: 20px; font-style: italic;">Lampiran <?php echo ($idx_int + 1); ?></div>
+            
+            <div style="text-align: center; margin-bottom: 30px;">
+                <h1 style="font-size: 14pt; text-decoration: none; font-weight: bold; margin-bottom: 5px; text-transform: uppercase;">Daftar Barang & Tempat Yang Akan Dipinjam</h1>
+                <h2 style="font-size: 14pt; font-weight: bold; text-transform: uppercase;">Pada Tanggal <?php echo htmlspecialchars($data_int['tanggal_kegiatan']); ?> Untuk Acara <?php echo htmlspecialchars($data_int['nama_acara']); ?> <?php echo htmlspecialchars($data_int['tahun']); ?></h2>
+            </div>
+
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
+                <thead>
+                    <tr style="background: #f5f5f5;">
+                        <th style="border: 1px solid #000; padding: 10px; text-align: center; width: 50px;">No</th>
+                        <th style="border: 1px solid #000; padding: 10px; text-align: left;">Nama Barang / Tempat</th>
+                        <th style="border: 1px solid #000; padding: 10px; text-align: center; width: 100px;">Jumlah</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach($barang_list as $b_idx => $b): ?>
+                    <tr>
+                        <td style="border: 1px solid #000; padding: 8px; text-align: center;"><?php echo $b_idx + 1; ?></td>
+                        <td style="border: 1px solid #000; padding: 8px;"><?php echo htmlspecialchars($b['nama']); ?></td>
+                        <td style="border: 1px solid #000; padding: 8px; text-align: center;"><?php echo htmlspecialchars($b['qty']); ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+            
+            <p style="font-size: 11pt; margin-top: 20px;">Demikian daftar barang ini kami buat untuk dapat dipergunakan sebagaimana mestinya.</p>
+        </div>
+        <?php endforeach; ?>
+    <?php endif; ?>
+    
+    <!-- Container untuk render Lampiran PDF (EXTERNAL) -->
+    <div id="lampiran-render-container"></div>
+    
+    <!-- Indikator Loading Lampiran -->
+    <div id="pdf-loading" class="no-print" style="display:none; text-align:center; padding:10px; color:#4facfe;">
+        <i class="fas fa-spinner fa-spin"></i> Memproses lampiran PDF...
+    </div>
+
     <!-- Script Print Viewport -->
+    <!-- Script PDF.js & Print Logic -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
     <script>
-        // Opsional: otomatis buka pop-up print saat baru di-load jika parameter ?print=true
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+        async function renderLampiran() {
+            const lampiranFiles = <?php echo json_encode($konten['lampiran_files'] ?? []); ?>;
+            const container = document.getElementById('lampiran-render-container');
+            const loader = document.getElementById('pdf-loading');
+            
+            if (!lampiranFiles || lampiranFiles.length === 0) {
+                window.isLampiranReady = true;
+                return;
+            }
+
+            loader.style.display = 'block';
+            window.isLampiranReady = false;
+
+            for (const fileUrl of lampiranFiles) {
+                try {
+                    // Gunakan path relatif agar lebih aman dari masalah CORS/Protokol
+                    const fullUrl = '../' + fileUrl; 
+                    const loadingTask = pdfjsLib.getDocument({
+                        url: fullUrl,
+                        withCredentials: true // Penting untuk beberapa hosting dengan security cookies
+                    });
+                    
+                    const pdf = await loadingTask.promise;
+                    
+                    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                        const page = await pdf.getPage(pageNum);
+                        const viewport = page.getViewport({ scale: 1.5 }); // Turunkan skala sedikit jika terlalu berat
+                        
+                        const canvas = document.createElement('canvas');
+                        const context = canvas.getContext('2d');
+                        canvas.height = viewport.height;
+                        canvas.width = viewport.width;
+                        canvas.className = 'pdf-page-canvas';
+                        
+                        const pageWrapper = document.createElement('div');
+                        pageWrapper.className = 'page';
+                        pageWrapper.style.padding = '0';
+                        pageWrapper.style.margin = '10mm auto';
+                        pageWrapper.style.overflow = 'hidden';
+                        pageWrapper.appendChild(canvas);
+                        
+                        container.appendChild(pageWrapper);
+
+                        const renderContext = {
+                            canvasContext: context,
+                            viewport: viewport
+                        };
+                        await page.render(renderContext).promise;
+                    }
+                } catch (err) {
+                    console.error('Gagal memuat PDF:', fileUrl, err);
+                    const errorBox = document.createElement('div');
+                    errorBox.style = "background:#fee; border:1px solid #fcc; color:#c33; padding:20px; margin:20px auto; width:210mm; border-radius:10px;";
+                    errorBox.innerHTML = `<strong>Gagal Memuat Lampiran:</strong> ${fileUrl.split('/').pop()}<br><small>${err.message}</small>`;
+                    container.appendChild(errorBox);
+                }
+            }
+            loader.style.display = 'none';
+            window.isLampiranReady = true;
+        }
+
+        // Fungsi Cetak yang lebih aman
+        function safePrint() {
+            if (!window.isLampiranReady) {
+                alert('Mohon tunggu, lampiran sedang diproses...');
+                return;
+            }
+            window.print();
+        }
+
+        // Inisialisasi
+        window.addEventListener('load', renderLampiran);
+
+        // Otomatis buka print jika ada parameter
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('print')) {
-            window.print();
+            window.addEventListener('load', async () => {
+                await renderLampiran();
+                window.print();
+            });
         }
 
         // Export ke Word (.doc)
         function exportWord() {
             var clone = document.querySelector('.page').cloneNode(true);
-            
-            // Tambahkan CSS inline dasar agar mirip
             var css = `
                 <style>
                     body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; color: #000; }
@@ -452,35 +605,42 @@ if (isset($BULK_PENGATURAN)) {
                     .isi-surat { text-align: justify; }
                 </style>
             `;
-
             var preHtml = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Surat Export</title>" + css + "</head><body>";
             var postHtml = "</body></html>";
-            
             var html = preHtml + clone.outerHTML + postHtml;
-
-            var blob = new Blob(['\ufeff', html], {
-                type: 'application/msword'
-            });
-            
-            // Nama file dari nomor surat
-            var filename = '<?php echo addslashes(htmlspecialchars($surat['nomor_surat'])); ?>'.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-            filename = filename ? filename + '.doc' : 'document.doc';
-            
-            var url = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent('\ufeff' + html);
-            
+            var blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+            var filename = '<?php echo addslashes($download_name); ?>' + '.doc';
+            var url = URL.createObjectURL(blob);
             var downloadLink = document.createElement("a");
             document.body.appendChild(downloadLink);
-            
-            if (navigator.msSaveOrOpenBlob) {
-                navigator.msSaveOrOpenBlob(blob, filename);
-            } else {
-                downloadLink.href = url;
-                downloadLink.download = filename;
-                downloadLink.click();
-            }
-            
+            downloadLink.href = url;
+            downloadLink.download = filename;
+            downloadLink.click();
             document.body.removeChild(downloadLink);
         }
     </script>
+    <style>
+        @media print {
+            .pdf-page-canvas {
+                width: 100% !important;
+                height: 100% !important;
+                object-fit: contain;
+                display: block;
+            }
+            .page {
+                margin: 0 !important;
+                box-shadow: none !important;
+                border: none !important;
+                page-break-after: always;
+            }
+            .no-print { display: none !important; }
+        }
+        .pdf-page-canvas {
+            width: 100%;
+            height: auto;
+            display: block;
+            background: white;
+        }
+    </style>
 </body>
 </html>

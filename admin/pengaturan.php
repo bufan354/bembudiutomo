@@ -126,10 +126,26 @@ $totalSesi = (int) ($jumlahSesi['total'] ?? 0);
 $db_size_mb = '-';
 $db_tables  = '-';
 if ($is_superadmin) {
-    $r = dbFetchOne("SELECT ROUND(SUM(data_length+index_length)/1024/1024,2) AS s FROM information_schema.tables WHERE table_schema=?", [DB_NAME], "s");
-    $db_size_mb = ($r['s'] ?? '0') . ' MB';
-    $c = dbFetchOne("SELECT COUNT(*) AS t FROM information_schema.tables WHERE table_schema=?", [DB_NAME], "s");
-    $db_tables  = ($c['t'] ?? '0') . ' tabel';
+    try {
+        if (strtolower(DB_CONNECTION) === 'pgsql') {
+            // PostgreSQL (Supabase)
+            $r = dbFetchOne("SELECT ROUND(pg_database_size(current_database()) / (1024.0 * 1024.0), 2) AS s");
+            $db_size_mb = ($r['s'] ?? '0') . ' MB';
+            
+            $c = dbFetchOne("SELECT COUNT(*) AS t FROM information_schema.tables WHERE table_schema = 'public'");
+            $db_tables  = ($c['t'] ?? '0') . ' tabel';
+        } else {
+            // MySQL (InfinityFree)
+            $r = dbFetchOne("SELECT ROUND(SUM(data_length+index_length)/1024/1024,2) AS s FROM information_schema.tables WHERE table_schema=?", [DB_NAME], "s");
+            $db_size_mb = ($r['s'] ?? '0') . ' MB';
+            
+            $c = dbFetchOne("SELECT COUNT(*) AS t FROM information_schema.tables WHERE table_schema=?", [DB_NAME], "s");
+            $db_tables  = ($c['t'] ?? '0') . ' tabel';
+        }
+    } catch (Exception $e) {
+        $db_size_mb = 'N/A';
+        $db_tables = 'N/A';
+    }
 }
 
 function renderAlert($msg) {

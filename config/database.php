@@ -36,29 +36,53 @@
 })();
 
 // ============================================
-// 2. KONSTANTA DATABASE
+// 2. DETEKSI LINGKUNGAN & KONSTANTA DATABASE
 // ============================================
-// Prioritaskan environment variables dari sistem
-defined('DB_HOST') || define('DB_HOST', getenv('DB_HOST') ?: ($_ENV['DB_HOST'] ?? ''));
-defined('DB_PORT') || define('DB_PORT', getenv('DB_PORT') ?: ($_ENV['DB_PORT'] ?? '5432'));
-defined('DB_USER') || define('DB_USER', getenv('DB_USER') ?: ($_ENV['DB_USER'] ?? ''));
-defined('DB_PASS') || define('DB_PASS', getenv('DB_PASS') ?: ($_ENV['DB_PASS'] ?? ''));
-defined('DB_NAME') || define('DB_NAME', getenv('DB_NAME') ?: ($_ENV['DB_NAME'] ?? ''));
+
+// Deteksi apakah berjalan di localhost atau server produksi
+$is_local = (
+    ($_SERVER['REMOTE_ADDR'] ?? '') === '127.0.0.1' || 
+    ($_SERVER['REMOTE_ADDR'] ?? '') === '::1' || 
+    ($_SERVER['HTTP_HOST'] ?? '') === 'localhost' ||
+    strpos(($_SERVER['HTTP_HOST'] ?? ''), '192.168') !== false
+);
+
+if ($is_local) {
+    // --- KONFIGURASI LOKAL (SUPABASE / POSTGRESQL) ---
+    defined('DB_CONNECTION') || define('DB_CONNECTION', 'pgsql');
+    defined('DB_HOST')       || define('DB_HOST', 'aws-1-ap-northeast-2.pooler.supabase.com');
+    defined('DB_PORT')       || define('DB_PORT', '6543');
+    defined('DB_USER')       || define('DB_USER', 'postgres.prskplzwcdnzdrdszkzy');
+    defined('DB_PASS')       || define('DB_PASS', 'Bem Budi Utomo Nasional');
+    defined('DB_NAME')       || define('DB_NAME', 'postgres');
+    defined('BASE_URL')      || define('BASE_URL', 'http://localhost/bem/');
+} else {
+    // --- KONFIGURASI PRODUKSI (INFINITYFREE / MYSQL) ---
+    defined('DB_CONNECTION') || define('DB_CONNECTION', 'mysql');
+    defined('DB_HOST')       || define('DB_HOST', 'sql213.infinityfree.com');
+    defined('DB_PORT')       || define('DB_PORT', '3306');
+    defined('DB_USER')       || define('DB_USER', 'if0_41167793');
+    defined('DB_PASS')       || define('DB_PASS', 'rtmiqtTCfJo');
+    defined('DB_NAME')       || define('DB_NAME', 'if0_41167793_bem_astawidya');
+    
+    // Otomatis deteksi domain di server
+    $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? "https://" : "http://";
+    $domain = $_SERVER['HTTP_HOST'];
+    defined('BASE_URL')      || define('BASE_URL', $protocol . $domain . '/');
+}
 
 // ============================================
 // 3. MODE DEBUG
 // ============================================
-defined('DB_DEBUG') || define('DB_DEBUG',
-    (defined('APP_ENV') ? APP_ENV : ($_ENV['APP_ENV'] ?? 'production')) === 'development'
-);
+defined('DB_DEBUG') || define('DB_DEBUG', $is_local);
 
 // ============================================
-// 4. KONEKSI DATABASE
+// 4. KONEKSI DATABASE (Hybrid MySQL/PostgreSQL)
 // ============================================
 
 /**
  * Mendapatkan koneksi database (singleton per request).
- * Menggunakan PDO dengan driver pgsql.
+ * Mendukung driver mysql dan pgsql secara dinamis.
  *
  * @return PDO
  * @throws RuntimeException jika koneksi gagal
@@ -68,22 +92,32 @@ function getConnection(): PDO {
 
     if ($pdo === null) {
         try {
-            $dsn = sprintf("pgsql:host=%s;port=%s;dbname=%s", DB_HOST, DB_PORT, DB_NAME);
+            $driver = strtolower(DB_CONNECTION);
             
-            $options = [
-                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                PDO::ATTR_EMULATE_PREPARES   => true,
-            ];
+            if ($driver === 'pgsql') {
+                // Konfigurasi untuk PostgreSQL (Supabase)
+                $dsn = sprintf("pgsql:host=%s;port=%s;dbname=%s", DB_HOST, DB_PORT, DB_NAME);
+                $options = [
+                    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                    PDO::ATTR_EMULATE_PREPARES   => true,
+                ];
+            } else {
+                // Konfigurasi untuk MySQL (InfinityFree)
+                $dsn = sprintf("mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4", DB_HOST, DB_PORT, DB_NAME);
+                $options = [
+                    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                    PDO::ATTR_EMULATE_PREPARES   => false,
+                ];
+            }
 
             $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
         } catch (PDOException $e) {
             error_log("[DB CONNECT ERROR] " . $e->getMessage());
 
-            if (DB_DEBUG) {
-                throw new RuntimeException("Koneksi DB gagal: " . $e->getMessage());
-            }
-            throw new RuntimeException("Terjadi kesalahan sistem. Silakan coba lagi.");
+            // Tampilkan pesan error asli untuk mempermudah debugging di InfinityFree
+            throw new RuntimeException("Koneksi DB gagal (" . DB_CONNECTION . "): " . $e->getMessage());
         }
     }
 
@@ -105,32 +139,26 @@ function getConnection(): PDO {
  */
 function dbQuery(string $sql, array $params = [], string $types = "") {
     $pdo = getConnection();
-
+    
     if (DB_DEBUG) {
         error_log("[DB QUERY] " . $sql);
         if (!empty($params)) {
             error_log("[DB PARAMS] " . json_encode($params));
         }
     }
-
+    
     try {
-        if (empty($params)) {
-            return $pdo->query($sql);
-        }
-
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
-
+        
         if (DB_DEBUG) {
             error_log("[DB SUCCESS] Query executed | row_count: " . $stmt->rowCount());
         }
-
+        
         return $stmt;
     } catch (PDOException $e) {
         error_log("[DB ERROR] " . $e->getMessage() . " | Query: " . $sql);
-        
-        $msg = DB_DEBUG ? $e->getMessage() : "Terjadi kesalahan sistem.";
-        throw new RuntimeException($msg);
+        throw new RuntimeException("DB Error: " . $e->getMessage());
     }
 }
 

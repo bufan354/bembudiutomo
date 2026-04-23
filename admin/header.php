@@ -22,6 +22,7 @@ header("Referrer-Policy: strict-origin-when-cross-origin");
 // CSP: Saat ini mengizinkan unsafe-inline untuk script dan style karena
 // adanya toggle password, strength meter, dll. Jika memungkinkan, gunakan nonce
 // untuk meningkatkan keamanan tanpa mengorbankan fungsionalitas.
+/* 
 header("Content-Security-Policy: "
     . "default-src 'self'; "
     . "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
@@ -31,6 +32,7 @@ header("Content-Security-Policy: "
     . "connect-src 'self'; "
     . "frame-ancestors 'none';"
 );
+*/
 
 // ============================================
 // LOAD DEPENDENSI & CEK LOGIN
@@ -45,10 +47,29 @@ if ($current_page !== 'login.php') {
 }
 
 $admin_name = $_SESSION['admin_name'] ?? 'Admin';
-$admin_role = $_SESSION['admin_role'] ?? 'admin';
+$admin_role = strtolower($_SESSION['admin_role'] ?? 'admin');
 
 $isSuperadmin = $admin_role === 'superadmin'
                 || !empty($_SESSION['admin_can_access_all']);
+
+// Deteksi Role Sekretaris (Toleran terhadap ejaan)
+$isSekretaris = (strpos($admin_role, 'sekretaris') !== false || strpos($admin_role, 'sekertaris') !== false);
+
+// ============================================
+// PROTEKSI AKSES ROLE SEKRETARIS
+// ============================================
+if ($isSekretaris && !isset($user_can_access_all)) {
+    $restricted_pages = [
+        'berita.php', 'berita-edit.php', 'berita-hapus.php',
+        'kepengurusan.php', 'kepengurusan-edit.php', 'kepengurusan-hapus.php',
+        'kabinet.php', 'visi-misi.php', 'kontak.php',
+        'upload-struktur.php', 'upload-struktur-hapus.php'
+    ];
+    if (in_array($current_page, $restricted_pages)) {
+        redirect('admin/dashboard.php', 'Akses ditolak! Sekretaris hanya diizinkan mengelola persuratan.', 'error');
+        exit();
+    }
+}
 
 // ============================================
 // CACHE BUSTER UNTUK CSS
@@ -92,9 +113,255 @@ if (isset($page_css)) {
     <link rel="stylesheet" href="<?php echo htmlspecialchars(baseUrl('admin/css/admin.css') . '?v=' . $adminCssVer, ENT_QUOTES, 'UTF-8'); ?>">
 
     <?php echo $pageCssTag; ?>
+    <style>
+            .btn-group-mobile {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                width: 100%;
+            }
+            .btn-group-mobile > * {
+                width: 100%;
+                justify-content: center;
+                display: flex;
+                align-items: center;
+                padding: 10px;
+                border-radius: 8px;
+                font-size: 0.85rem;
+                min-height: 38px;
+                box-sizing: border-box;
+                text-decoration: none !important;
+            }
+
+            @media (max-width: 768px) {
+                .responsive-card-table { 
+                    border: none !important; 
+                    width: 100% !important; 
+                    min-width: 0 !important; 
+                    margin: 0 !important; 
+                    table-layout: fixed !important; 
+                }
+                .responsive-card-table thead { display: none; }
+                .responsive-card-table tr { 
+                    display: block; 
+                    margin-bottom: 1.2rem; 
+                    background: #1e1e1e; 
+                    border: 1px solid rgba(255,255,255,0.08); 
+                    border-radius: 16px; 
+                    padding: 8px 0; /* Kurangi padding samping agar tombol bisa ke pinggir */
+                    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+                    width: 100% !important;
+                    box-sizing: border-box;
+                }
+                .responsive-card-table td { 
+                    display: flex; 
+                    justify-content: space-between; 
+                    align-items: flex-start; 
+                    padding: 10px 12px; 
+                    border: none !important; 
+                    border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+                    min-height: 40px;
+                    box-sizing: border-box;
+                    width: 100% !important;
+                }
+                
+                /* Paksa kolom Aksi lebar penuh dan tanpa label */
+                .responsive-card-table td.td-aksi { 
+                    display: block !important; 
+                    width: 100% !important;
+                    padding: 5px 8px 15px 8px !important; /* Kurangi padding atas untuk menghilangkan gap gaib */
+                    border-bottom: none !important;
+                    text-align: center !important;
+                }
+                .responsive-card-table td.td-aksi::before { 
+                    display: none !important; 
+                }
+                
+                /* Tampilan Nomor Surat Berderet Vertikal */
+                .surat-indicators {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 5px;
+                    align-items: flex-start; /* Sejajar kiri di mobile */
+                    margin-top: 5px;
+                }
+                .surat-indicators > span, .surat-indicators > a {
+                    display: block !important;
+                    width: fit-content;
+                }
+
+                .group-ribbon-mobile {
+                    display: block;
+                    width: 100%;
+                    background: linear-gradient(to right, rgba(74, 144, 226, 0.2), rgba(74, 144, 226, 0.1));
+                    color: #4A90E2;
+                    text-align: center;
+                    font-size: 0.65rem;
+                    padding: 6px 0;
+                    margin-top: 10px;
+                    border-top: 1px solid rgba(74, 144, 226, 0.1);
+                    cursor: pointer;
+                    transition: all 0.3s ease;
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
+                    font-weight: 600;
+                    border-radius: 0 0 14px 14px;
+                }
+                .group-ribbon-mobile:hover {
+                    background: rgba(74, 144, 226, 0.3);
+                }
+
+                .responsive-card-table td::before { 
+                    content: attr(data-label); 
+                    font-weight: 600; 
+                    color: #4A90E2;
+                    font-size: 0.7rem;
+                    text-transform: uppercase;
+                    flex: 0 0 90px;
+                    text-align: left;
+                }
+                .responsive-card-table td > span, 
+                .responsive-card-table td > strong, 
+                .responsive-card-table td > div,
+                .responsive-card-table td > a {
+                    word-break: break-word;
+                    flex: 1;
+                    margin-left: 10px;
+                    text-align: left;
+                    font-size: 0.85rem;
+                    max-width: calc(100% - 100px);
+                }
+
+                /* Hapus batasan max-width dan margin untuk isi kolom Aksi */
+                .responsive-card-table td.td-aksi > div,
+                .responsive-card-table td.td-aksi > a,
+                .responsive-card-table td.td-aksi > span,
+                .responsive-card-table td.td-aksi > button {
+                    margin-left: 0 !important;
+                    max-width: 100% !important;
+                    text-align: center !important;
+                    flex: none !important;
+                    width: 100% !important;
+                }
+
+                /* Mobile: Tombol 1 Kolom Vertikal */
+                .btn-group-mobile {
+                    display: flex !important;
+                    flex-direction: column !important;
+                    gap: 8px;
+                    width: 100%;
+                    align-items: center;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    box-sizing: border-box;
+                }
+                .btn-group-mobile > * {
+                    width: 100% !important;
+                    margin: 0 !important;
+                    padding: 10px !important;
+                    font-size: 0.8rem !important;
+                    min-height: 40px !important;
+                    justify-content: center;
+                    display: flex;
+                    align-items: center;
+                    box-sizing: border-box;
+                }
+            }
+
+            /* Desktop Adjustments */
+            @media (min-width: 769px) {
+                .responsive-card-table td {
+                    vertical-align: top;
+                    padding-top: 15px;
+                }
+                .btn-group-mobile {
+                    display: flex !important;
+                    flex-direction: column !important;
+                    gap: 5px !important;
+                    align-items: center !important;
+                    width: 100% !important;
+                }
+                .btn-group-mobile > * {
+                    width: 130px !important; /* Uniform width on desktop */
+                    min-width: 130px !important;
+                    justify-content: center;
+                }
+                .group-ribbon-mobile {
+                    display: inline-block !important;
+                    width: 130px !important;
+                    margin-top: 8px !important;
+                    padding: 6px 0 !important;
+                    border-radius: 6px !important;
+                    background: rgba(74, 144, 226, 0.1) !important;
+                    border: 1px solid rgba(74, 144, 226, 0.2) !important;
+                }
+                .group-ribbon-mobile:hover {
+                    background: rgba(74, 144, 226, 0.2) !important;
+                    border-color: rgba(74, 144, 226, 0.4) !important;
+                }
+                .child-nomor-surat { padding-left: 45px !important; }
+                .child-nomor-surat::before {
+                    content: "└";
+                    position: absolute;
+                    left: 20px;
+                    color: #555;
+                }
+                .surat-indicators {
+                    display: flex;
+                    flex-direction: row;
+                    flex-wrap: wrap;
+                    gap: 8px;
+                    margin-top: 5px;
+                }
+                .surat-indicators > span, .surat-indicators > a {
+                    font-size: 0.7rem;
+                }
+            }
+
+            /* Group Rows Logic */
+            .child-row {
+                display: none;
+                opacity: 0;
+                transform: translateY(-10px);
+                transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            }
+            .child-row.show {
+                display: table-row !important;
+                opacity: 1;
+                transform: translateY(0);
+            }
+            @media (max-width: 768px) {
+                .child-row.show {
+                    display: block !important;
+                }
+            }
+
+        /* Modern Toggle Switch */
+        .switch-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            margin-bottom: 14px;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .switch-container:hover { background: rgba(255,255,255,0.06); border-color: rgba(74,144,226,0.4); transform: translateY(-1px); }
+        .switch-label { font-size: 0.92rem; color: #ddd; display: flex; align-items: center; gap: 12px; }
+        .switch-label i { color: #4A90E2; font-size: 1rem; width: 20px; text-align: center; }
+        .switch { position: relative; display: inline-block; width: 48px; height: 24px; flex-shrink: 0; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #222; transition: .3s; border-radius: 34px; border: 1.5px solid #444; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 2.5px; background-color: #666; transition: .3s; border-radius: 50%; }
+        input:checked + .slider { background-color: #4A90E2; border-color: #4A90E2; }
+        input:checked + .slider:before { transform: translateX(23px); background-color: white; box-shadow: 0 0 8px rgba(255,255,255,0.4); }
+    </style>
 </head>
 <body class="<?php echo htmlspecialchars(basename($current_page, '.php'), ENT_QUOTES, 'UTF-8'); ?>">
-<div class="admin-wrapper">
+<div class="admin-wrapper" style="overflow-x: hidden;">
 
 <?php if ($current_page !== 'login.php'): ?>
 
@@ -148,36 +415,39 @@ if (isset($page_css)) {
                class="<?php echo $current_page === 'dashboard.php' ? 'active' : ''; ?>">
                 <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
             </a>
-            <a href="berita.php"
-               class="<?php echo $current_page === 'berita.php' ? 'active' : ''; ?>">
-                <i class="fas fa-newspaper"></i><span>Berita</span>
-            </a>
-            <a href="kepengurusan.php"
-               class="<?php echo $current_page === 'kepengurusan.php' ? 'active' : ''; ?>">
-                <i class="fas fa-users"></i><span>Kepengurusan</span>
-            </a>
-            <a href="kabinet.php"
-               class="<?php echo $current_page === 'kabinet.php' ? 'active' : ''; ?>">
-                <i class="fas fa-crown"></i><span>Kabinet</span>
-            </a>
-            <a href="visi-misi.php"
-               class="<?php echo $current_page === 'visi-misi.php' ? 'active' : ''; ?>">
-                <i class="fas fa-bullseye"></i><span>Visi Misi</span>
-            </a>
-            <a href="kontak.php"
-               class="<?php echo $current_page === 'kontak.php' ? 'active' : ''; ?>">
-                <i class="fas fa-address-book"></i><span>Kontak</span>
-            </a>
-            <a href="pengaturan.php"
-               class="<?php echo $current_page === 'pengaturan.php' ? 'active' : ''; ?>">
-                <i class="fas fa-cog"></i><span>Pengaturan</span>
-            </a>
-            <a href="upload-struktur.php"
-               class="<?php echo $current_page === 'upload-struktur.php' ? 'active' : ''; ?>">
-                <i class="fas fa-image"></i><span>Upload Struktur</span>
-            </a>
 
-            <?php if ($admin_role === 'sekretaris' || $isSuperadmin): ?>
+            <?php if (!$isSekretaris || $isSuperadmin): ?>
+                <a href="berita.php"
+                class="<?php echo $current_page === 'berita.php' ? 'active' : ''; ?>">
+                    <i class="fas fa-newspaper"></i><span>Berita</span>
+                </a>
+                <a href="kepengurusan.php"
+                class="<?php echo $current_page === 'kepengurusan.php' ? 'active' : ''; ?>">
+                    <i class="fas fa-users"></i><span>Kepengurusan</span>
+                </a>
+                <a href="kabinet.php"
+                class="<?php echo $current_page === 'kabinet.php' ? 'active' : ''; ?>">
+                    <i class="fas fa-crown"></i><span>Kabinet</span>
+                </a>
+                <a href="visi-misi.php"
+                class="<?php echo $current_page === 'visi-misi.php' ? 'active' : ''; ?>">
+                    <i class="fas fa-bullseye"></i><span>Visi Misi</span>
+                </a>
+                <a href="kontak.php"
+                class="<?php echo $current_page === 'kontak.php' ? 'active' : ''; ?>">
+                    <i class="fas fa-address-book"></i><span>Kontak</span>
+                </a>
+                <a href="pengaturan.php"
+                class="<?php echo $current_page === 'pengaturan.php' ? 'active' : ''; ?>">
+                    <i class="fas fa-cog"></i><span>Pengaturan Web</span>
+                </a>
+                <a href="upload-struktur.php"
+                class="<?php echo $current_page === 'upload-struktur.php' ? 'active' : ''; ?>">
+                    <i class="fas fa-image"></i><span>Upload Struktur</span>
+                </a>
+            <?php endif; ?>
+
+            <?php if ($isSekretaris || $isSuperadmin): ?>
             <div class="menu-divider"></div>
             <div class="menu-label">Surat & Arsip</div>
             <a href="arsip-surat.php"
@@ -193,6 +463,30 @@ if (isset($page_css)) {
                 <i class="fas fa-cogs"></i><span>Pengaturan Surat</span>
             </a>
             <?php endif; ?>
+
+            <?php if ($isSekretaris || $isSuperadmin): ?>
+            <div class="menu-divider"></div>
+            <div class="menu-label">Peminjaman Barang</div>
+            <a href="master-barang.php"
+               class="<?php echo $current_page === 'master-barang.php' ? 'active' : ''; ?>">
+                <i class="fas fa-boxes"></i><span>Master Barang</span>
+            </a>
+            <a href="cetak-lampiran.php"
+               class="<?php echo $current_page === 'cetak-lampiran.php' ? 'active' : ''; ?>">
+                <i class="fas fa-print"></i><span>Cetak Lampiran</span>
+            </a>
+            <a href="arsip-lampiran.php"
+               class="<?php echo $current_page === 'arsip-lampiran.php' ? 'active' : ''; ?>">
+                <i class="fas fa-archive"></i><span>Arsip Lampiran</span>
+            </a>
+            <?php endif; ?>
+
+            <div class="menu-divider"></div>
+            <div class="menu-label">Akun</div>
+            <a href="pengaturan.php"
+               class="<?php echo $current_page === 'pengaturan.php' ? 'active' : ''; ?>">
+                <i class="fas fa-user-cog"></i><span>Profil & Keamanan</span>
+            </a>
 
             <?php if ($isSuperadmin): ?>
             <div class="menu-divider"></div>
@@ -229,9 +523,9 @@ if (isset($page_css)) {
                     </div>
                 </div>
             </div>
-            <a href="logout.php?csrf_token=<?php echo htmlspecialchars(csrfToken(), ENT_QUOTES, 'UTF-8'); ?>"
+            <a href="javascript:void(0)"
                class="logout-btn"
-               onclick="return confirm('Yakin ingin logout?')">
+               onclick="confirmLogout('<?php echo htmlspecialchars(csrfToken(), ENT_QUOTES, 'UTF-8'); ?>')">
                 <i class="fas fa-sign-out-alt"></i> Logout
             </a>
         </div>
@@ -264,3 +558,70 @@ if (isset($page_css)) {
             <?php endif; ?>
         </div>
         <?php endif; ?>
+
+<!-- Logout Modal -->
+<div id="logoutModal" class="header-custom-modal">
+    <div class="header-modal-content">
+        <div class="header-modal-header">
+            <i class="fas fa-sign-out-alt"></i>
+            <h4>Konfirmasi Logout</h4>
+        </div>
+        <div class="header-modal-body">
+            <p>Apakah Anda yakin ingin keluar dari sistem admin?</p>
+        </div>
+        <div class="header-modal-footer">
+            <button type="button" class="header-btn-cancel" onclick="closeLogoutModal()">Batal</button>
+            <a href="#" id="confirmLogoutBtn" class="header-btn-confirm" style="text-decoration:none;">Ya, Logout</a>
+        </div>
+    </div>
+</div>
+
+<style>
+.header-custom-modal {
+    display: none;
+    position: fixed;
+    z-index: 10001; /* Di atas sidebar & konten */
+    left: 0; top: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.8);
+    backdrop-filter: blur(5px);
+    align-items: center;
+    justify-content: center;
+}
+.header-modal-content {
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 380px;
+    padding: 25px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    animation: headerModalSlide 0.3s ease-out;
+}
+@keyframes headerModalSlide {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+.header-modal-header { display: flex; align-items: center; gap: 12px; margin-bottom: 15px; color: #4A90E2; }
+.header-modal-header h4 { margin: 0; font-size: 1.2rem; }
+.header-modal-body p { color: #ccc; margin: 0; }
+.header-modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 25px; }
+.header-btn-cancel { background: #333; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; }
+.header-btn-confirm { background: #f44336; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 500; }
+</style>
+
+<script>
+function confirmLogout(token) {
+    const modal = document.getElementById('logoutModal');
+    const btn = document.getElementById('confirmLogoutBtn');
+    btn.href = 'logout.php?csrf_token=' + token;
+    modal.style.display = 'flex';
+}
+function closeLogoutModal() {
+    document.getElementById('logoutModal').style.display = 'none';
+}
+// Tutup modal jika klik di luar box
+window.onclick = function(event) {
+    const modal = document.getElementById('logoutModal');
+    if (event.target == modal) closeLogoutModal();
+}
+</script>

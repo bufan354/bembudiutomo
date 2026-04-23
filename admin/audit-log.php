@@ -124,11 +124,17 @@ $logs = dbFetchAll(
     $paramsPaged, $typesPaged
 );
 
-// Statistik ringkas
+// Statistik ringkas - Hybrid Syntax (MySQL vs PostgreSQL)
+$isMysql = true; // Default ke mysql jika di produksi
+if (function_exists('dbGetDriver')) {
+    $isMysql = (dbGetDriver() === 'mysql');
+}
+$intervalSql = $isMysql ? "NOW() - INTERVAL 30 DAY" : "now() - INTERVAL '30 days'";
+
 $stats = dbFetchAll(
     "SELECT action, COUNT(*) as total
      FROM audit_log
-     WHERE created_at >= now() - INTERVAL '30 days'
+     WHERE created_at >= $intervalSql
      GROUP BY action ORDER BY total DESC"
 );
 
