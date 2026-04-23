@@ -91,7 +91,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $kode_keg      = strtoupper(str_replace(' ', '', sanitizeText($_POST['kode_kegiatan'], 50)));
         $nomor_surat   = "{$nomor_urut}/{$jenis_surat}/{$kode_keg}/BEM/{$bulan_romawi}/{$tahun}";
         $tanggal_dikirim_raw = sanitizeText($_POST['tanggal_dikirim'], 50);
-        $tanggal_dikirim = (empty($tanggal_dikirim_raw) || $tanggal_dikirim_raw === 'Belum Di kirim') ? null : $tanggal_dikirim_raw;
+        $tanggal_dikirim = 'Belum Di kirim';
+        if (!empty($tanggal_dikirim_raw) && $tanggal_dikirim_raw !== 'Belum Di kirim') {
+            // Jika format YYYY-MM-DD (dari date picker), ubah ke DD/MM/YYYY agar konsisten di arsip
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal_dikirim_raw)) {
+                $p = explode('-', $tanggal_dikirim_raw);
+                $tanggal_dikirim = "$p[2]/$p[1]/$p[0]";
+            } else {
+                $tanggal_dikirim = $tanggal_dikirim_raw;
+            }
+        }
         $perihal        = sanitizeText($_POST['perihal'], 255);
         $tempat_tanggal = sanitizeText($_POST['tempat_tanggal'], 255);
         $tujuan         = strip_tags(trim($_POST['tujuan']));
@@ -520,7 +529,11 @@ if ($is_edit || $is_clone) {
 @media (min-width: 768px) { .buat-surat-container .wakpel-grid { grid-template-columns: 1fr 1fr; } }
 .buat-surat-container .wakpel-card { background: rgba(0,0,0,0.2); border-radius: 20px; padding: 20px; border: 1px solid var(--border-color); }
 .buat-surat-container .wakpel-card-label { font-size: 0.75rem; color: #5a8fc4; text-transform: uppercase; font-weight: 700; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }
-.buat-surat-container .date-range-wrap { display: flex; gap: 12px; align-items: center; }
+.buat-surat-container .date-range-wrap { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+@media (max-width: 600px) {
+    .buat-surat-container .date-range-wrap { flex-direction: column; align-items: stretch; }
+    .buat-surat-container .date-range-wrap span { display: none; } /* Sembunyikan kata 'sampai' di mobile */
+}
 .buat-surat-container .preview-bar { background: rgba(74,144,226,0.08); border-radius: 12px; padding: 12px 16px; font-size: 0.85rem; margin-top: 15px; color: #8BB9F0; border-left: 4px solid var(--accent-color); }
 
 /* Drum Picker Refinement (Wheel Effect) */
@@ -535,8 +548,12 @@ if ($is_edit || $is_clone) {
 .drum-arrow { background: #1a1a1a; border: 1px solid #333; color: #777; font-size: 0.8rem; cursor: pointer; padding: 4px 10px; border-radius: 8px; transition: all 0.2s; margin-top: 5px; }
 .drum-arrow:hover { background: #333; color: #fff; }
 .drum-time-label { font-size: 0.7rem; color: #555; text-transform: uppercase; margin-bottom: 8px; font-weight: 700; }
-.drum-groups-wrap { display: flex; gap: 20px; align-items: flex-start; margin-top: 15px; }
+.drum-groups-wrap { display: flex; gap: 20px; align-items: flex-start; margin-top: 15px; flex-wrap: wrap; }
 .drum-colon { color: var(--accent-color); font-weight: 700; font-size: 1.2rem; padding-top: 80px; }
+@media (max-width: 600px) {
+    .buat-surat-container .drum-groups-wrap { justify-content: center; }
+    .drum-colon { display: none; } /* Di mobile tidak butuh titik dua pemisah grup */
+}
 
 /* Custom RTE */
 .buat-surat-container #rte-editor {
@@ -648,7 +665,7 @@ if ($is_edit || $is_clone) {
                             <input type="text" id="kode_kegiatan_input" name="kode_kegiatan" class="tpl-search-input" placeholder="Cari atau ketik kode..." value="<?php echo htmlspecialchars($kode_kegiatan); ?>" required <?php echo $is_clone ? 'readonly style="opacity:0.6;"' : ''; ?> onfocus="showTplResults('kegiatan')" onkeyup="filterTpl('kegiatan')">
                             <div class="tpl-results" id="results-kegiatan">
                                 <?php foreach($list_kegiatan as $k): ?>
-                                <div class="tpl-item" onclick="selectKegiatan({nama:'<?php echo addslashes($k['label']); ?>', kode:'<?php echo addslashes($k['perihal_default']); ?>'})">
+                                <div class="tpl-item" onclick='selectKegiatan(<?php echo json_encode(["nama" => $k["label"], "kode" => $k["perihal_default"]]); ?>)'>
                                     <div class="tpl-item-label"><?php echo htmlspecialchars($k['label']); ?></div>
                                     <div class="tpl-item-text">Kode: <?php echo htmlspecialchars($k['perihal_default']); ?></div>
                                 </div>
@@ -663,7 +680,7 @@ if ($is_edit || $is_clone) {
                             <input type="text" id="input_perihal" name="perihal" class="tpl-search-input" placeholder="Cari atau ketik perihal..." value="<?php echo htmlspecialchars($edit_data['perihal']); ?>" required onfocus="showTplResults('perihal')" onkeyup="filterTpl('perihal')">
                             <div class="tpl-results" id="results-perihal">
                                 <?php foreach($list_perihal as $p): ?>
-                                <div class="tpl-item" onclick="selectTpl('input_perihal', '<?php echo addslashes($p['isi_teks']); ?>', 'perihal')">
+                                <div class="tpl-item" onclick='selectTpl("input_perihal", <?php echo json_encode($p["isi_teks"]); ?>, "perihal")'>
                                     <div class="tpl-item-label"><?php echo htmlspecialchars($p['label']); ?></div>
                                     <div class="tpl-item-text"><?php echo htmlspecialchars($p['isi_teks']); ?></div>
                                 </div>
@@ -673,13 +690,9 @@ if ($is_edit || $is_clone) {
                     </div>
                 </div>
                 <div class="grid-2">
-                    <div class="form-group">
+                    <div class="form-group" style="grid-column: span 2;">
                         <label>Titimangsa & Tempat Tanggal</label>
                         <input type="text" name="tempat_tanggal" value="<?php echo htmlspecialchars($edit_data['tempat_tanggal']); ?>" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Tanggal Masuk Arsip (Opsional)</label>
-                        <input type="text" name="tanggal_dikirim" value="<?php echo htmlspecialchars($edit_data['tanggal_dikirim'] ?? 'Belum Di kirim'); ?>">
                     </div>
                 </div>
                 <div class="grid-2">
@@ -700,7 +713,7 @@ if ($is_edit || $is_clone) {
                             <input type="text" class="tpl-search-input" placeholder="Cari template tujuan..." onfocus="showTplResults('tujuan')" onkeyup="filterTpl('tujuan')">
                             <div class="tpl-results" id="results-tujuan">
                                 <?php foreach($list_tujuan as $t): ?>
-                                <div class="tpl-item" onclick="selectTpl('textarea_tujuan', '<?php echo addslashes($t['isi_teks']); ?>', 'tujuan')">
+                                <div class="tpl-item" onclick='selectTpl("textarea_tujuan", <?php echo json_encode($t["isi_teks"]); ?>, "tujuan")'>
                                     <div class="tpl-item-label"><?php echo htmlspecialchars($t['label']); ?></div>
                                     <div class="tpl-item-text"><?php echo htmlspecialchars($t['isi_teks']); ?></div>
                                 </div>
@@ -801,7 +814,7 @@ if ($is_edit || $is_clone) {
                             <input type="text" id="input_tempat" name="pelaksanaan_tempat" class="tpl-search-input" placeholder="Cari atau ketik tempat..." value="<?php echo htmlspecialchars($edit_data['pelaksanaan_tempat']); ?>" required onfocus="showTplResults('tempat')" onkeyup="filterTpl('tempat')">
                             <div class="tpl-results" id="results-tempat">
                                 <?php foreach($list_tempat as $t): ?>
-                                <div class="tpl-item" onclick="selectTpl('input_tempat', '<?php echo addslashes($t['label']); ?>', 'tempat')">
+                                <div class="tpl-item" onclick='selectTpl("input_tempat", <?php echo json_encode($t["label"]); ?>, "tempat")'>
                                     <div class="tpl-item-label"><?php echo htmlspecialchars($t['label']); ?></div>
                                 </div>
                                 <?php endforeach; ?>

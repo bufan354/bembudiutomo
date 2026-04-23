@@ -12,6 +12,64 @@ if (!in_array($jenis, ['L', 'D', 'M'])) $jenis = 'L';
 $error = '';
 $success = '';
 
+// Handle Update Tanggal Dikirim (GET biasa - menghindari form nesting)
+// Update juga seluruh anggota grup yang sama (nomor_surat yang sama)
+if (isset($_GET['set_tgl']) && is_numeric($_GET['set_tgl']) && !empty($_GET['tanggal'])) {
+    if (hash_equals($_SESSION['csrf_token'] ?? '', $_GET['csrf_token'] ?? '')) {
+        $id_surat = (int)$_GET['set_tgl'];
+        $tgl_raw  = trim($_GET['tanggal']);
+        
+        // Konversi DD/MM/YYYY ke YYYY-MM-DD untuk MySQL
+        $tgl_db = NULL;
+        $p = explode('/', $tgl_raw);
+        if (count($p) === 3 && checkdate((int)$p[1], (int)$p[0], (int)$p[2])) {
+            $tgl_db = "$p[2]-$p[1]-$p[0]";
+        } elseif (preg_match('/^\d{4}-\d{2}-\d{2}$/', $tgl_raw)) {
+            $tgl_db = $tgl_raw;
+        } else {
+            $error = "Format tanggal salah. Gunakan DD/MM/YYYY (contoh: 24/04/2026).";
+        }
+        
+        if (empty($error) && $tgl_db) {
+            // Cari nomor_surat dari ID ini, lalu update seluruh grup
+            $surat = dbFetchOne("SELECT nomor_surat FROM arsip_surat WHERE id = ? AND periode_id = ?", [$id_surat, $periode_id]);
+            if ($surat) {
+                $res = dbQuery("UPDATE arsip_surat SET tanggal_dikirim = ? WHERE nomor_surat = ? AND periode_id = ?", [$tgl_db, $surat['nomor_surat'], $periode_id]);
+            } else {
+                $res = dbQuery("UPDATE arsip_surat SET tanggal_dikirim = ? WHERE id = ? AND periode_id = ?", [$tgl_db, $id_surat, $periode_id]);
+            }
+            if ($res) {
+                redirect("admin/arsip-surat.php?jenis=$jenis", 'Tanggal Dikirim berhasil diperbarui untuk seluruh grup.', 'success');
+            } else {
+                $error = "Gagal memperbarui tanggal.";
+            }
+        }
+    } else {
+        $error = "CSRF token tidak valid.";
+    }
+}
+
+// Handle Hapus Tanggal Dikirim (Reset) - juga untuk seluruh grup
+if (isset($_GET['reset_tgl']) && is_numeric($_GET['reset_tgl'])) {
+    if (hash_equals($_SESSION['csrf_token'] ?? '', $_GET['csrf_token'] ?? '')) {
+        $id_reset = (int)$_GET['reset_tgl'];
+        // Cari nomor_surat, lalu reset seluruh grup
+        $surat = dbFetchOne("SELECT nomor_surat FROM arsip_surat WHERE id = ? AND periode_id = ?", [$id_reset, $periode_id]);
+        if ($surat) {
+            $res = dbQuery("UPDATE arsip_surat SET tanggal_dikirim = NULL WHERE nomor_surat = ? AND periode_id = ?", [$surat['nomor_surat'], $periode_id]);
+        } else {
+            $res = dbQuery("UPDATE arsip_surat SET tanggal_dikirim = NULL WHERE id = ? AND periode_id = ?", [$id_reset, $periode_id]);
+        }
+        if ($res) {
+            redirect("admin/arsip-surat.php?jenis=$jenis", 'Tanggal Dikirim berhasil direset untuk seluruh grup.', 'success');
+        } else {
+            $error = "Gagal mereset tanggal.";
+        }
+    } else {
+        $error = "CSRF token tidak valid.";
+    }
+}
+
 // Handle upload Kop Surat Global
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'upload_kop') {
     if (!csrfVerify()) {
@@ -238,6 +296,79 @@ $css = "
 .bulk-checkbox-column { display: none; }
 .bulk-active .bulk-checkbox-column { display: table-cell; }
 .bulk-active .header-row th.bulk-checkbox-column { display: table-cell; }
+
+/* Inline Edit Tanggal */
+.inline-tgl-form {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+.inline-tgl-form input[type='text'] {
+    width: 110px;
+    padding: 5px 8px;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(74,144,226,0.3);
+    border-radius: 8px;
+    color: #fff;
+    font-size: 0.8rem;
+    text-align: center;
+}
+.inline-tgl-form input[type='text']::placeholder {
+    color: #555;
+    font-size: 0.75rem;
+}
+.inline-tgl-form input[type='text']:focus {
+    outline: none;
+    border-color: #4A90E2;
+    box-shadow: 0 0 6px rgba(74,144,226,0.3);
+}
+.btn-tgl-save {
+    background: rgba(46,204,113,0.15);
+    border: 1px solid rgba(46,204,113,0.4);
+    color: #2ecc71;
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    transition: all 0.2s;
+}
+.btn-tgl-save:hover {
+    background: rgba(46,204,113,0.3);
+}
+.tgl-display {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+}
+.tgl-display.has-date {
+    background: rgba(74,144,226,0.1);
+    border: 1px solid rgba(74,144,226,0.2);
+    color: #4A90E2;
+}
+.tgl-display.no-date {
+    background: rgba(243,156,18,0.1);
+    border: 1px solid rgba(243,156,18,0.3);
+    color: #f39c12;
+}
+.btn-tgl-reset {
+    background: none;
+    border: none;
+    color: #e74c3c;
+    cursor: pointer;
+    font-size: 0.75rem;
+    opacity: 0.6;
+    transition: 0.2s;
+    text-decoration: none;
+    padding: 2px 4px;
+}
+.btn-tgl-reset:hover {
+    opacity: 1;
+}
 ";
 ?>
 <style><?php echo $css; ?></style>
@@ -301,9 +432,10 @@ $css = "
                 <a href="arsip-surat.php?jenis=<?php echo $jenis; ?>&export=excel" class="btn-buat" style="background:#2E7D32; flex:1; justify-content:center; white-space: nowrap;"><i class="fas fa-file-excel"></i> Excel</a>
                 
                 <?php if ($jenis === 'M'): ?>
-                    <a href="arsip-manual.php?type=M" class="btn-buat" style="background:#f39c12; flex:1; justify-content:center; white-space: nowrap;"><i class="fas fa-file-import"></i> Catat</a>
+                    <a href="arsip-manual.php?type=M" class="btn-buat" style="background:#f39c12; flex:1; justify-content:center; white-space: nowrap;"><i class="fas fa-file-import"></i> Catat Manual</a>
                 <?php else: ?>
-                    <a href="buat-surat.php" class="btn-buat" style="flex:1.5; justify-content:center; white-space: nowrap;"><i class="fas fa-plus"></i> Buat Surat</a>
+                    <a href="buat-surat.php" class="btn-buat" style="flex:1.2; justify-content:center; white-space: nowrap;"><i class="fas fa-plus"></i> Buat Otomatis</a>
+                    <a href="arsip-manual.php?type=<?php echo $jenis; ?>" class="btn-buat" style="background:#f39c12; flex:1; justify-content:center; white-space: nowrap;"><i class="fas fa-file-import"></i> Catat Manual</a>
                 <?php endif; ?>
             </div>
         </div>
@@ -337,7 +469,43 @@ $css = "
                             <td data-label="No" style="text-align:center;">
                                 <strong style="color:#fff;"><?php echo $no++; ?></strong>
                             </td>
-                            <td data-label="Tanggal" style="text-align:center;"><span><?php echo htmlspecialchars((string)$parent['tanggal_dikirim']); ?></span></td>
+                            <td data-label="Tanggal" style="text-align:center;">
+                                <?php 
+                                    $tgl_val = (string)$parent['tanggal_dikirim'];
+                                    $is_empty = (empty($tgl_val) || $tgl_val === 'Belum Di kirim' || $tgl_val === '0000-00-00' || $tgl_val === NULL);
+                                    
+                                    $display_val = '';
+                                    if (!$is_empty) {
+                                        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $tgl_val)) {
+                                            $p = explode('-', $tgl_val);
+                                            $display_val = "$p[2]/$p[1]/$p[0]";
+                                        } else {
+                                            $display_val = $tgl_val;
+                                        }
+                                    }
+                                ?>
+                                <?php if ($is_empty): ?>
+                                    <a href="javascript:void(0)" class="tgl-display no-date" 
+                                       onclick="var t=prompt('Masukkan Tanggal Dikirim (DD/MM/YYYY):',''); if(t) window.location='arsip-surat.php?jenis=<?php echo $jenis; ?>&set_tgl=<?php echo $parent['id']; ?>&tanggal='+encodeURIComponent(t)+'&csrf_token=<?php echo csrfToken(); ?>';">
+                                        <i class="fas fa-calendar-plus"></i>
+                                        <span>Set Tanggal</span>
+                                    </a>
+                                <?php else: ?>
+                                    <div class="tgl-display has-date">
+                                        <i class="fas fa-calendar-check"></i>
+                                        <span><?php echo htmlspecialchars($display_val); ?></span>
+                                        <a href="javascript:void(0)" class="btn-tgl-reset" title="Edit Tanggal"
+                                           onclick="var t=prompt('Edit Tanggal Dikirim (DD/MM/YYYY):','<?php echo $display_val; ?>'); if(t) window.location='arsip-surat.php?jenis=<?php echo $jenis; ?>&set_tgl=<?php echo $parent['id']; ?>&tanggal='+encodeURIComponent(t)+'&csrf_token=<?php echo csrfToken(); ?>';">
+                                            <i class="fas fa-edit" style="color:#4A90E2;"></i>
+                                        </a>
+                                        <a href="arsip-surat.php?jenis=<?php echo $jenis; ?>&reset_tgl=<?php echo $parent['id']; ?>&csrf_token=<?php echo csrfToken(); ?>" 
+                                           class="btn-tgl-reset" title="Hapus Tanggal"
+                                           onclick="return confirm('Reset tanggal dikirim?')">
+                                            <i class="fas fa-times"></i>
+                                        </a>
+                                    </div>
+                                <?php endif; ?>
+                            </td>
                             <td data-label="Nomor Surat">
                                 <div class="surat-header-mobile">
                                     <strong style="color:#fff; display: block; margin-bottom: 5px;"><?php echo htmlspecialchars($parent['nomor_surat']); ?></strong>
@@ -433,7 +601,43 @@ $css = "
                             <?php foreach (array_slice($items, 1) as $child): ?>
                             <tr class="child-row <?php echo $group_id; ?>">
                                 <td data-label="Grup" style="text-align:center; color: #555;">└</td>
-                                <td data-label="Tanggal" style="text-align:center; color: #888; font-size: 0.85rem;"><span><?php echo htmlspecialchars((string)$child['tanggal_dikirim']); ?></span></td>
+                                <td data-label="Tanggal" style="text-align:center;">
+                                    <?php 
+                                        $ctgl_val = (string)$child['tanggal_dikirim'];
+                                        $c_is_empty = (empty($ctgl_val) || $ctgl_val === 'Belum Di kirim' || $ctgl_val === '0000-00-00' || $ctgl_val === NULL);
+                                        
+                                        $c_display_val = '';
+                                        if (!$c_is_empty) {
+                                            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $ctgl_val)) {
+                                                $cp = explode('-', $ctgl_val);
+                                                $c_display_val = "$cp[2]/$cp[1]/$cp[0]";
+                                            } else {
+                                                $c_display_val = $ctgl_val;
+                                            }
+                                        }
+                                    ?>
+                                    <?php if ($c_is_empty): ?>
+                                        <a href="javascript:void(0)" class="tgl-display no-date" 
+                                           onclick="var t=prompt('Masukkan Tanggal Dikirim (DD/MM/YYYY):',''); if(t) window.location='arsip-surat.php?jenis=<?php echo $jenis; ?>&set_tgl=<?php echo $child['id']; ?>&tanggal='+encodeURIComponent(t)+'&csrf_token=<?php echo csrfToken(); ?>';">
+                                            <i class="fas fa-calendar-plus"></i>
+                                            <span>Set Tanggal</span>
+                                        </a>
+                                    <?php else: ?>
+                                        <div class="tgl-display has-date">
+                                            <i class="fas fa-calendar-check"></i>
+                                            <span><?php echo htmlspecialchars($c_display_val); ?></span>
+                                            <a href="javascript:void(0)" class="btn-tgl-reset" title="Edit Tanggal"
+                                               onclick="var t=prompt('Edit Tanggal Dikirim (DD/MM/YYYY):','<?php echo $c_display_val; ?>'); if(t) window.location='arsip-surat.php?jenis=<?php echo $jenis; ?>&set_tgl=<?php echo $child['id']; ?>&tanggal='+encodeURIComponent(t)+'&csrf_token=<?php echo csrfToken(); ?>';">
+                                                <i class="fas fa-edit" style="color:#4A90E2;"></i>
+                                            </a>
+                                            <a href="arsip-surat.php?jenis=<?php echo $jenis; ?>&reset_tgl=<?php echo $child['id']; ?>&csrf_token=<?php echo csrfToken(); ?>" 
+                                               class="btn-tgl-reset" title="Hapus Tanggal"
+                                               onclick="return confirm('Reset tanggal dikirim?')">
+                                                <i class="fas fa-times"></i>
+                                            </a>
+                                        </div>
+                                    <?php endif; ?>
+                                </td>
                                 <td data-label="Nomor Surat" class="child-nomor-surat">
                                     <div class="surat-header-mobile">
                                         <strong style="color:#fff; display: block; margin-bottom: 5px;"><?php echo htmlspecialchars($child['nomor_surat']); ?></strong>
@@ -710,6 +914,8 @@ if (kopInput) {
         }
     }
 }
+
+
 </script>
 
 <?php require_once __DIR__ . '/footer.php'; ?>
