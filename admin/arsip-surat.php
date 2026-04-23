@@ -201,16 +201,7 @@ $css = "
                 <a href="arsip-surat.php?jenis=M" class="tab-btn <?php echo $jenis === 'M' ? 'active' : ''; ?>">Surat Masuk (Luar)</a>
             </div>
             
-            <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;" id="bulk-action-area">
-                <!-- Tombol Utama yang Dinamis -->
-                <button type="button" id="btn-bulk-main" onclick="toggleBulkMode()" class="btn-buat" style="background:#6a1b9a; border:none; cursor:pointer; min-width: 180px;">
-                    <i class="fas fa-tasks"></i> <span id="text-bulk-main">Pilih Surat untuk ZIP</span>
-                </button>
-                
-                <button type="button" id="btn-bulk-cancel" onclick="cancelBulkMode()" class="btn-buat" style="background:#444; border:none; cursor:pointer; display:none;">
-                    <i class="fas fa-times"></i> Batal
-                </button>
-
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
                 <a href="arsip-surat.php?jenis=<?php echo $jenis; ?>&export=excel" class="btn-buat" style="background:#2E7D32;"><i class="fas fa-file-excel"></i> Export Excel</a>
                 
                 <?php if ($jenis === 'M'): ?>
@@ -227,7 +218,6 @@ $css = "
                 <table class="admin-table">
                     <thead>
                         <tr class="header-row">
-                            <th width="4%" class="bulk-checkbox-column" style="text-align:center;"><input type="checkbox" id="selectAll" onclick="toggleSelectAll(this)" style="cursor:pointer; width:18px; height:18px;"></th>
                             <th width="5%" style="text-align:center;">No</th>
                             <th width="15%" style="text-align:center;">Tanggal <?php echo $jenis==='M' ? 'Diterima' : 'Dikirim'; ?></th>
                             <th width="20%">Nomor Surat</th>
@@ -248,7 +238,6 @@ $css = "
                             $group_id = "group_" . md5($nomor_surat);
                         ?>
                         <tr class="<?php echo $has_children ? 'group-parent' : ''; ?>">
-                            <td class="bulk-checkbox-column" style="text-align:center;"><input type="checkbox" name="ids[]" value="<?php echo $parent['id']; ?>" class="row-checkbox" style="cursor:pointer; width:16px; height:16px;"></td>
                             <td style="text-align:center;"><?php echo $no++; ?></td>
                             <td style="text-align:center;"><?php echo htmlspecialchars((string)$parent['tanggal_dikirim']); ?></td>
                             <td>
@@ -336,7 +325,6 @@ $css = "
                         <?php if ($has_children): ?>
                             <?php foreach (array_slice($items, 1) as $child): ?>
                             <tr class="child-row <?php echo $group_id; ?>">
-                                <td class="bulk-checkbox-column" style="text-align:center;"><input type="checkbox" name="ids[]" value="<?php echo $child['id']; ?>" class="row-checkbox" style="cursor:pointer; width:16px; height:16px;"></td>
                                 <td style="text-align:center; color: #555;">└</td>
                                 <td style="text-align:center; color: #888; font-size: 0.85rem;"><?php echo htmlspecialchars((string)$child['tanggal_dikirim']); ?></td>
                                 <td style="padding-left: 30px;">
@@ -401,64 +389,6 @@ $css = "
     </div>
 </div>
 
-<script>
-let isBulkMode = false;
-
-function toggleBulkMode() {
-    const wrapper = document.getElementById('table-wrapper');
-    const mainBtn = document.getElementById('btn-bulk-main');
-    const cancelBtn = document.getElementById('btn-bulk-cancel');
-    const btnText = document.getElementById('text-bulk-main');
-
-    if (!isBulkMode) {
-        // AKTIFKAN MODE PILIH
-        isBulkMode = true;
-        wrapper.classList.add('bulk-active');
-        cancelBtn.style.display = 'inline-block';
-        btnText.innerText = 'Konfirmasi & Download (ZIP)';
-        mainBtn.style.background = '#27ae60'; // Hijau konfirmasi
-    } else {
-        // EKSEKUSI DOWNLOAD
-        const checkboxes = document.getElementsByClassName('row-checkbox');
-        let checkedCount = 0;
-        for (let i = 0; i < checkboxes.length; i++) {
-            if (checkboxes[i].checked) checkedCount++;
-        }
-        
-        if (checkedCount === 0) {
-            alert('Silakan pilih minimal satu surat untuk di-download.');
-            return;
-        }
-        
-        document.getElementById('bulkForm').submit();
-    }
-}
-
-function cancelBulkMode() {
-    isBulkMode = false;
-    const wrapper = document.getElementById('table-wrapper');
-    const mainBtn = document.getElementById('btn-bulk-main');
-    const cancelBtn = document.getElementById('btn-bulk-cancel');
-    const btnText = document.getElementById('text-bulk-main');
-    const selectAll = document.getElementById('selectAll');
-
-    wrapper.classList.remove('bulk-active');
-    cancelBtn.style.display = 'none';
-    btnText.innerText = 'Pilih Surat untuk ZIP';
-    mainBtn.style.background = '#6a1b9a'; // Kembali ke ungu
-    
-    // Uncheck all
-    if(selectAll) selectAll.checked = false;
-    toggleSelectAll({checked: false});
-}
-
-function toggleSelectAll(master) {
-    const checkboxes = document.getElementsByClassName('row-checkbox');
-    for (let i = 0; i < checkboxes.length; i++) {
-        checkboxes[i].checked = master.checked;
-    }
-}
-</script>
 
 <script>
 function toggleGroup(groupId, btn) {

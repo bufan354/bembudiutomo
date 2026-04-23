@@ -38,7 +38,7 @@
 // ============================================
 // 2. KONSTANTA DATABASE
 // ============================================
-// Prioritaskan environment variables dari sistem (untuk Render/Railway)
+// Prioritaskan environment variables dari sistem
 defined('DB_HOST') || define('DB_HOST', getenv('DB_HOST') ?: ($_ENV['DB_HOST'] ?? ''));
 defined('DB_PORT') || define('DB_PORT', getenv('DB_PORT') ?: ($_ENV['DB_PORT'] ?? '5432'));
 defined('DB_USER') || define('DB_USER', getenv('DB_USER') ?: ($_ENV['DB_USER'] ?? ''));
