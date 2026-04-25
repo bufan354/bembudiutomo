@@ -169,15 +169,15 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
         .kop-extra .contact-item.email i { color: #EA4335; }
 
         /* Meta Surat (Nomor, Hal, Tujuan) */
-        .meta-surat { width: 100%; margin-bottom: 10px; line-height: 1.3; }
+        .meta-surat { width: 100%; margin-bottom: 5px; line-height: 1.3; }
         .meta-surat td { vertical-align: top; }
-        .col-label { width: 70px; }
+        .col-label { width: 75px; }
         .col-titik { width: 15px; text-align: center; }
 
         /* Isi Surat */
         .isi-surat {
             text-align: justify;
-            margin-bottom: 15px;
+            margin-bottom: 10px;
         }
         .indent { text-indent: 40px; margin-top: 5px; }
         
@@ -186,12 +186,12 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
         .waktu-pelaksanaan td { vertical-align: top; padding: 4px 10px; border: none; }
         
         /* TTD Area */
-        .ttd-area { width: 100%; margin-top: 25px; text-align: center; }
-        .ttd-area .ttd-title { font-weight: bold; margin-bottom: 15px; }
-        .ttd-table { width: 100%; margin-bottom: 10px; }
-        .ttd-table td { width: 50%; vertical-align: top; padding-bottom: 10px; }
+        .ttd-area { width: 100%; margin-top: 15px; text-align: center; }
+        .ttd-area .ttd-title { font-weight: bold; margin-bottom: 5px; }
+        .ttd-table { width: 100%; margin-bottom: 5px; border-collapse: collapse; border: none !important; }
+        .ttd-table td { width: 50%; vertical-align: top; padding-bottom: 5px; border: none !important; }
         .ttd-name { font-weight: bold; text-decoration: underline; margin-top: 55px; }
-        .ttd-jabatan { font-size: 15px; }
+        .ttd-jabatan { font-size: 14px; }
 
         @page {
             size: A4 portrait;
@@ -199,18 +199,38 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
         }
 
         @media print {
-            body { background: white; margin: 0; padding: 0; }
-            /* Reset visual screen-only traits tapi pertahankan dimensi padding A4 (20mm) */
+            body { background: white; margin: 0; padding: 0; -webkit-print-color-adjust: exact; }
             .page { 
-                margin: 0; 
-                padding: 15mm 20mm; 
-                border: none; 
-                border-radius: 0; 
+                margin: 0 !important; 
+                padding: 10mm 15mm; 
+                border: none !important; 
+                border-radius: 0 !important; 
                 width: 210mm; 
-                min-height: 297mm; 
-                box-shadow: none; 
-                background: white; 
+                min-height: 295mm; /* Mengurangi toleransi PDF driver */
+                box-shadow: none !important; 
+                outline: none !important;
+                background: white !important; 
                 page-break-after: always; 
+                overflow: hidden;
+            }
+            * { 
+                border: none !important; 
+                border-color: transparent !important; 
+                box-shadow: none !important; 
+                outline: none !important; 
+            }
+            img { 
+                border-style: none !important; 
+                border: 0 !important; 
+                outline: none !important; 
+            }
+            table, tr, td { 
+                border: none !important; 
+                border-collapse: collapse !important; 
+            }
+            .pdf-page-canvas { border: none !important; }
+            .page:last-of-type {
+                page-break-after: avoid !important;
             }
             .no-print { display: none !important; }
         }
@@ -233,7 +253,7 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
         if (file_exists($kop_path)): 
             $kop_url = baseUrl('uploads/kop_surat.png') . '?v=' . filemtime($kop_path);
         ?>
-            <div style="margin: -15mm -20mm -5px -20mm; text-align: center;">
+            <div style="margin: -10mm -15mm -5px -15mm; text-align: center;">
                 <img src="<?php echo htmlspecialchars($kop_url); ?>" style="width:100%; height:auto; display:block;" alt="Kop Surat">
             </div>
         <?php else: ?>
@@ -261,17 +281,19 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
         <?php endif; ?>
 
         <!-- 2. META SURAT -->
-        <table class="meta-surat">
+        <table class="meta-surat" style="width: 100%; border-collapse: collapse;">
             <tr>
-                <td class="col-label">Nomor</td>
-                <td class="col-titik">:</td>
-                <td><?php echo htmlspecialchars($surat['nomor_surat']); ?></td>
-                <td style="white-space: nowrap; width: 1%;"><?php echo htmlspecialchars($surat['tempat_tanggal']); ?></td>
+                <td class="col-label" style="width: 75px;">Nomor</td>
+                <td class="col-titik" style="width: 15px;">:</td>
+                <td style="vertical-align: top;"><?php echo htmlspecialchars($surat['nomor_surat']); ?></td>
+                <td style="width: 1%; white-space: nowrap; text-align: left; vertical-align: top;">
+                    <?php echo htmlspecialchars($surat['tempat_tanggal']); ?>
+                </td>
             </tr>
             <tr>
                 <td class="col-label">Lampiran</td>
                 <td class="col-titik">:</td>
-                <td>
+                <td style="vertical-align: top;">
                     <?php 
                     $cnt_pdf = !empty($konten['lampiran_files']) ? count($konten['lampiran_files']) : 0;
                     $cnt_int = !empty($konten['lampiran_internal_ids']) ? count($konten['lampiran_internal_ids']) : 0;
@@ -282,10 +304,18 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                 <td></td>
             </tr>
             <tr>
-                <td class="col-label">Perihal</td>
-                <td class="col-titik">:</td>
-                <td><b><u><?php echo htmlspecialchars($surat['perihal']); ?></u></b></td>
-                <td style="padding-top: 10px;">
+                <td class="col-label" style="vertical-align: top;">Perihal</td>
+                <td class="col-titik" style="vertical-align: top;">:</td>
+                <td style="vertical-align: top; padding-right: 30px;">
+                    <div style="font-weight: bold; text-decoration: underline; line-height: 1.4;">
+                        <?php echo htmlspecialchars($surat['perihal']); ?>
+                    </div>
+                </td>
+                <td></td>
+            </tr>
+            <tr>
+                <td colspan="3"></td>
+                <td style="vertical-align: top; padding-top: 15px; white-space: nowrap;">
                     Yth,<br>
                     <b><?php echo nl2br(htmlspecialchars($surat['tujuan'])); ?></b><br>
                     Di Tempat
@@ -310,13 +340,13 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                 $tahun_surat = end($parts_nomor) ?: date('Y');
 
                 if (!empty($nama_keg)) {
-                    // Mode template: generate dari nama_kegiatan + tema (Bolding the nama_keg and tema_keg)
+                    // Mode template: generate dari nama_kegiatan + tema
                     $pembuka = 'Sehubungan akan diadakannya kegiatan <b>'
                         . htmlspecialchars($nama_keg) . '</b> Tahun ' . htmlspecialchars($tahun_surat)
                         . (!empty($tema_keg) ? ' dengan tema "<b>' . htmlspecialchars($tema_keg) . '</b>"' : '')
                         . ' yang akan dilaksanakan pada :';
                 } elseif (!empty($custom)) {
-                    // Mode custom: izinkan tag format dasar dari rich text editor
+                    // Mode custom
                     $pembuka = strip_tags($custom, '<b><strong><i><em><u>');
                 } else {
                     $pembuka = '';
@@ -368,7 +398,7 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
 
             $sapaan = !empty($konten['sapaan_tujuan']) ? $konten['sapaan_tujuan'] . ' ' : '';
             $paragraf_permohonan  = 'Dengan ini kami menyampaikan '
-                . strtolower($surat['perihal'])
+                . $surat['perihal']
                 . ' kepada '
                 . $sapaan
                 . $tujuan_baris_pertama
@@ -410,14 +440,14 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                             <img src="<?php echo uploadUrl($pengaturan['cap_panitia_image']); ?>" style="position:absolute; top:20px; left:100%; transform:translateX(-50%); max-width:190px; max-height:95px; mix-blend-mode:multiply; pointer-events:none; opacity:0.85; z-index:2;">
                         <?php endif; ?>
                         <?php if(!empty($konten['panitia_ketua_ttd'])): ?>
-                            <img src="<?php echo renderTTD($konten['panitia_ketua_ttd']); ?>" style="position:absolute; top:15px; left:50%; transform:translateX(-50%); max-height:80px; mix-blend-mode:multiply; pointer-events:none;">
+                            <img src="<?php echo renderTTD($konten['panitia_ketua_ttd']); ?>" style="position:absolute; bottom:15px; left:50%; transform:translateX(-50%); max-height:85px; mix-blend-mode:multiply; pointer-events:none;">
                         <?php endif; ?>
                         <div class="ttd-name"><?php echo htmlspecialchars($konten['panitia_ketua'] ?? ''); ?></div>
                     </td>
                     <td style="position:relative;">
                         Sekretaris
                         <?php if(!empty($konten['panitia_sekretaris_ttd'])): ?>
-                            <img src="<?php echo renderTTD($konten['panitia_sekretaris_ttd']); ?>" style="position:absolute; top:15px; left:50%; transform:translateX(-50%); max-height:80px; mix-blend-mode:multiply; pointer-events:none;">
+                            <img src="<?php echo renderTTD($konten['panitia_sekretaris_ttd']); ?>" style="position:absolute; bottom:15px; left:50%; transform:translateX(-50%); max-height:85px; mix-blend-mode:multiply; pointer-events:none;">
                         <?php endif; ?>
                         <div class="ttd-name"><?php echo htmlspecialchars($konten['panitia_sekretaris'] ?? ''); ?></div>
                     </td>
@@ -432,10 +462,10 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                         a.n Rektor INSTBUNAS Majalengka<br>
                         <span class="ttd-jabatan"><?php echo htmlspecialchars($pengaturan['ttd_warek_jabatan'] ?? 'WAREK III Bid. Kemahasiswaan'); ?></span>
                         <?php if(!empty($pengaturan['cap_warek_image']) && ($konten['use_cap_warek'] ?? '1') === '1'): ?>
-                            <img src="<?php echo uploadUrl($pengaturan['cap_warek_image']); ?>" style="position:absolute; bottom:20px; left:0; max-width:180px; max-height:130px; mix-blend-mode:multiply; pointer-events:none; opacity:0.85; z-index:2;">
+                            <img src="<?php echo uploadUrl($pengaturan['cap_warek_image']); ?>" style="position:absolute; bottom:0px; left:0; max-width:180px; max-height:130px; mix-blend-mode:multiply; pointer-events:none; opacity:0.85; z-index:2;">
                         <?php endif; ?>
                         <?php if(!empty($pengaturan['ttd_warek_image']) && ($konten['use_ttd_warek'] ?? '1') === '1'): ?>
-                            <img src="<?php echo uploadUrl($pengaturan['ttd_warek_image']); ?>" style="position:absolute; top:40px; left:50%; transform:translateX(-50%); max-height:80px; mix-blend-mode:multiply; pointer-events:none;">
+                            <img src="<?php echo uploadUrl($pengaturan['ttd_warek_image']); ?>" style="position:absolute; bottom:20px; left:50%; transform:translateX(-50%); max-height:85px; mix-blend-mode:multiply; pointer-events:none;">
                         <?php endif; ?>
                         <div class="ttd-name"><?php echo htmlspecialchars($pengaturan['ttd_warek_name'] ?? 'II MUHAMAD MISBAH, S.Pd.I., SE., MM.'); ?></div>
                     </td>
@@ -443,10 +473,10 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                         Ketua BEM<br>
                         <span class="ttd-jabatan"><?php echo htmlspecialchars(trim(str_ireplace('Ketua BEM', '', $pengaturan['ttd_presma_jabatan'] ?? 'INSTBUNAS Majalengka'))); ?></span>
                         <?php if(!empty($pengaturan['cap_presma_image']) && ($konten['use_cap_presma'] ?? '1') === '1'): ?>
-                            <img src="<?php echo uploadUrl($pengaturan['cap_presma_image']); ?>" style="position:absolute; bottom:20px; left:10%; max-width:180px; max-height:130px; mix-blend-mode:multiply; pointer-events:none; opacity:0.85; z-index:2;">
+                            <img src="<?php echo uploadUrl($pengaturan['cap_presma_image']); ?>" style="position:absolute; bottom:0px; left:10%; max-width:180px; max-height:130px; mix-blend-mode:multiply; pointer-events:none; opacity:0.85; z-index:2;">
                         <?php endif; ?>
                         <?php if(!empty($pengaturan['ttd_presma_image']) && ($konten['use_ttd_presma'] ?? '1') === '1'): ?>
-                            <img src="<?php echo uploadUrl($pengaturan['ttd_presma_image']); ?>" style="position:absolute; top:40px; left:50%; transform:translateX(-50%); max-height:80px; mix-blend-mode:multiply; pointer-events:none;">
+                            <img src="<?php echo uploadUrl($pengaturan['ttd_presma_image']); ?>" style="position:absolute; bottom:20px; left:50%; transform:translateX(-50%); max-height:85px; mix-blend-mode:multiply; pointer-events:none;">
                         <?php endif; ?>
                         <div class="ttd-name"><?php echo htmlspecialchars($pengaturan['ttd_presma_name'] ?? $nama_ketua_bem); ?></div>
                     </td>

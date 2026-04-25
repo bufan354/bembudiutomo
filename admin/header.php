@@ -437,10 +437,6 @@ if (isset($page_css)) {
                 class="<?php echo $current_page === 'kontak.php' ? 'active' : ''; ?>">
                     <i class="fas fa-address-book"></i><span>Kontak</span>
                 </a>
-                <a href="pengaturan.php"
-                class="<?php echo $current_page === 'pengaturan.php' ? 'active' : ''; ?>">
-                    <i class="fas fa-cog"></i><span>Pengaturan Web</span>
-                </a>
                 <a href="upload-struktur.php"
                 class="<?php echo $current_page === 'upload-struktur.php' ? 'active' : ''; ?>">
                     <i class="fas fa-image"></i><span>Upload Struktur</span>

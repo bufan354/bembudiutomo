@@ -90,15 +90,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $nomor_urut    = sanitizeText($_POST['nomor_urut'], 10);
         $kode_keg      = strtoupper(str_replace(' ', '', sanitizeText($_POST['kode_kegiatan'], 50)));
         $nomor_surat   = "{$nomor_urut}/{$jenis_surat}/{$kode_keg}/BEM/{$bulan_romawi}/{$tahun}";
-        $tanggal_dikirim_raw = sanitizeText($_POST['tanggal_dikirim'], 50);
-        $tanggal_dikirim = 'Belum Di kirim';
+        $tanggal_dikirim_raw = sanitizeText($_POST['tanggal_dikirim'] ?? '', 50);
+        $tanggal_dikirim = null;
         if (!empty($tanggal_dikirim_raw) && $tanggal_dikirim_raw !== 'Belum Di kirim') {
-            // Jika format YYYY-MM-DD (dari date picker), ubah ke DD/MM/YYYY agar konsisten di arsip
+            // Pastikan format YYYY-MM-DD untuk database (PostgreSQL/MySQL)
             if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal_dikirim_raw)) {
-                $p = explode('-', $tanggal_dikirim_raw);
-                $tanggal_dikirim = "$p[2]/$p[1]/$p[0]";
-            } else {
                 $tanggal_dikirim = $tanggal_dikirim_raw;
+            } elseif (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $tanggal_dikirim_raw)) {
+                $p = explode('/', $tanggal_dikirim_raw);
+                $tanggal_dikirim = "{$p[2]}-{$p[1]}-{$p[0]}";
             }
         }
         $perihal        = sanitizeText($_POST['perihal'], 255);
@@ -545,11 +545,13 @@ if ($is_edit || $is_clone) {
 .drum-item.near2 { opacity: 0.3; filter: blur(1px); }
 .drum-highlight { position: absolute; top: 64px; left: 4px; right: 4px; height: 40px; background: rgba(74, 144, 226, 0.15); border-radius: 8px; border: 1px solid rgba(74, 144, 226, 0.3); pointer-events: none; z-index: 5; }
 .drum-group { display: flex; align-items: center; gap: 8px; }
-.drum-arrow { background: #1a1a1a; border: 1px solid #333; color: #777; font-size: 0.8rem; cursor: pointer; padding: 4px 10px; border-radius: 8px; transition: all 0.2s; margin-top: 5px; }
+.drum-arrow { background: #1a1a1a; border: 1px solid #333; color: #777; font-size: 0.8rem; cursor: pointer; padding: 4px 10px; border-radius: 8px; transition: all 0.2s; display: block; width: 100%; }
+.drum-arrow-up { margin-bottom: 5px; }
+.drum-arrow-down { margin-top: 5px; }
 .drum-arrow:hover { background: #333; color: #fff; }
 .drum-time-label { font-size: 0.7rem; color: #555; text-transform: uppercase; margin-bottom: 8px; font-weight: 700; }
 .drum-groups-wrap { display: flex; gap: 20px; align-items: flex-start; margin-top: 15px; flex-wrap: wrap; }
-.drum-colon { color: var(--accent-color); font-weight: 700; font-size: 1.2rem; padding-top: 80px; }
+.drum-colon { color: var(--accent-color); font-weight: 700; font-size: 1.2rem; padding-top: 104px; }
 @media (max-width: 600px) {
     .buat-surat-container .drum-groups-wrap { justify-content: center; }
     .drum-colon { display: none; } /* Di mobile tidak butuh titik dua pemisah grup */
@@ -690,9 +692,21 @@ if ($is_edit || $is_clone) {
                     </div>
                 </div>
                 <div class="grid-2">
-                    <div class="form-group" style="grid-column: span 2;">
+                    <div class="form-group">
                         <label>Titimangsa & Tempat Tanggal</label>
                         <input type="text" name="tempat_tanggal" value="<?php echo htmlspecialchars($edit_data['tempat_tanggal']); ?>" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Tanggal Dikirim (Untuk Arsip)</label>
+                        <input type="date" name="tanggal_dikirim" value="<?php 
+                            $tgl_val = $edit_data['tanggal_dikirim'] ?? '';
+                            if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $tgl_val)) {
+                                $p = explode('/', $tgl_val);
+                                echo "{$p[2]}-{$p[1]}-{$p[0]}";
+                            } elseif (preg_match('/^\d{4}-\d{2}-\d{2}$/', $tgl_val)) {
+                                echo $tgl_val;
+                            }
+                        ?>">
                     </div>
                 </div>
                 <div class="grid-2">
@@ -767,9 +781,20 @@ if ($is_edit || $is_clone) {
                     <div class="wakpel-card">
                         <div class="wakpel-card-label"><i class="fas fa-calendar-day"></i> Hari & Tanggal</div>
                         <div class="date-range-wrap">
-                            <input type="date" id="tgl-mulai" onchange="formatTanggalRange()">
-                            <span style="color:var(--text-muted);">sampai</span>
-                            <input type="date" id="tgl-selesai" onchange="formatTanggalRange()">
+                            <input type="date" id="tgl-mulai" onchange="formatTanggalRange()" value="<?php echo htmlspecialchars($edit_data['pelaksanaan_hari_tanggal_raw_start'] ?? ''); ?>">
+                            <span style="color:var(--text-muted); font-size: 0.8rem;">selama</span>
+                            <div style="display:flex; gap:5px; align-items:center;">
+                                <select id="durasi-hari" onchange="handleDurasiChange()" style="padding: 8px 12px; border-radius: 12px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.05); color: #fff; cursor: pointer; outline:none;">
+                                    <option value="1">1 Hari</option>
+                                    <option value="2">2 Hari</option>
+                                    <option value="3">3 Hari</option>
+                                    <option value="4">4 Hari</option>
+                                    <option value="5">5 Hari</option>
+                                    <option value="custom">Custom...</option>
+                                </select>
+                                <input type="number" id="custom-hari" min="1" value="1" oninput="formatTanggalRange()" style="display:none; width: 60px; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.05); color: #fff; outline:none;">
+                                <span id="label-hari" style="color:var(--text-muted); font-size: 0.8rem; display:none;">Hari</span>
+                            </div>
                         </div>
                         <input type="hidden" id="out-tanggal" name="pelaksanaan_hari_tanggal" value="<?php echo htmlspecialchars($edit_data['pelaksanaan_hari_tanggal']); ?>">
                         <div class="preview-bar" id="preview-tanggal"><?php echo htmlspecialchars($edit_data['pelaksanaan_hari_tanggal']); ?></div>
@@ -781,18 +806,34 @@ if ($is_edit || $is_clone) {
                             <div>
                                 <div class="drum-time-label">Mulai</div>
                                 <div class="drum-group">
-                                    <div><div class="drum-col" id="drum-h-start"></div><button type="button" class="drum-arrow" onclick="drumHS.scrollBy(1)">▼</button></div>
+                                    <div>
+                                        <button type="button" class="drum-arrow drum-arrow-up" onclick="drumHS.scrollBy(-1)">▲</button>
+                                        <div class="drum-col" id="drum-h-start"></div>
+                                        <button type="button" class="drum-arrow drum-arrow-down" onclick="drumHS.scrollBy(1)">▼</button>
+                                    </div>
                                     <span class="drum-colon">:</span>
-                                    <div><div class="drum-col" id="drum-m-start"></div><button type="button" class="drum-arrow" onclick="drumMS.scrollBy(1)">▼</button></div>
+                                    <div>
+                                        <button type="button" class="drum-arrow drum-arrow-up" onclick="drumMS.scrollBy(-1)">▲</button>
+                                        <div class="drum-col" id="drum-m-start"></div>
+                                        <button type="button" class="drum-arrow drum-arrow-down" onclick="drumMS.scrollBy(1)">▼</button>
+                                    </div>
                                 </div>
                             </div>
                             <div style="padding-top:24px; color:var(--text-muted); font-size:0.8rem;">s.d</div>
                             <div id="drum-end-wrap">
                                 <div class="drum-time-label">Selesai</div>
                                 <div class="drum-group">
-                                    <div><div class="drum-col" id="drum-h-end"></div><button type="button" class="drum-arrow" onclick="drumHE.scrollBy(1)">▼</button></div>
+                                    <div>
+                                        <button type="button" class="drum-arrow drum-arrow-up" onclick="drumHE.scrollBy(-1)">▲</button>
+                                        <div class="drum-col" id="drum-h-end"></div>
+                                        <button type="button" class="drum-arrow drum-arrow-down" onclick="drumHE.scrollBy(1)">▼</button>
+                                    </div>
                                     <span class="drum-colon">:</span>
-                                    <div><div class="drum-col" id="drum-m-end"></div><button type="button" class="drum-arrow" onclick="drumME.scrollBy(1)">▼</button></div>
+                                    <div>
+                                        <button type="button" class="drum-arrow drum-arrow-up" onclick="drumME.scrollBy(-1)">▲</button>
+                                        <div class="drum-col" id="drum-m-end"></div>
+                                        <button type="button" class="drum-arrow drum-arrow-down" onclick="drumME.scrollBy(1)">▼</button>
+                                    </div>
                                 </div>
                             </div>
                             <div style="padding-top:24px;">
@@ -1221,16 +1262,47 @@ function applyToggleSelesai(on) {
 // ========== Tanggal Range ==========
 const HARI_ID  = ['Minggu','Senin','Selasa','Rabu','Kamis',"Jum'at",'Sabtu'];
 const BULAN_ID = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+
+function handleDurasiChange() {
+    const sel = document.getElementById('durasi-hari');
+    const custom = document.getElementById('custom-hari');
+    const label = document.getElementById('label-hari');
+    
+    if (sel.value === 'custom') {
+        custom.style.display = 'block';
+        label.style.display = 'inline';
+    } else {
+        custom.style.display = 'none';
+        label.style.display = 'none';
+    }
+    formatTanggalRange();
+}
+
 function formatTanggalRange() {
-    const mulai   = document.getElementById('tgl-mulai').value;
-    const selesai = document.getElementById('tgl-selesai').value;
-    if (!mulai) { document.getElementById('preview-tanggal').innerText = '—belum dipilih—'; return; }
+    const mulai = document.getElementById('tgl-mulai').value;
+    const sel = document.getElementById('durasi-hari');
+    const custom = document.getElementById('custom-hari');
+    
+    if (!mulai) { 
+        document.getElementById('preview-tanggal').innerText = '—belum dipilih—'; 
+        return; 
+    }
+
+    let jmlHari = parseInt(sel.value);
+    if (sel.value === 'custom') {
+        jmlHari = parseInt(custom.value) || 1;
+    }
+
     const d1 = new Date(mulai + 'T00:00:00');
     let result = '';
-    if (!selesai || selesai === mulai) {
+
+    if (jmlHari <= 1) {
         result = HARI_ID[d1.getDay()] + ', ' + d1.getDate() + ' ' + BULAN_ID[d1.getMonth()] + ' ' + d1.getFullYear();
     } else {
-        const d2 = new Date(selesai + 'T00:00:00');
+        // Hitung tanggal selesai
+        const d2 = new Date(d1);
+        d2.setDate(d1.getDate() + (jmlHari - 1));
+
         const hari = HARI_ID[d1.getDay()] === HARI_ID[d2.getDay()] ? HARI_ID[d1.getDay()] : HARI_ID[d1.getDay()] + '-' + HARI_ID[d2.getDay()];
         const bln1 = BULAN_ID[d1.getMonth()], bln2 = BULAN_ID[d2.getMonth()];
         const tgl  = bln1 === bln2 && d1.getFullYear() === d2.getFullYear()
@@ -1238,6 +1310,7 @@ function formatTanggalRange() {
             : d1.getDate() + ' ' + bln1 + ' ' + d1.getFullYear() + ' – ' + d2.getDate() + ' ' + bln2 + ' ' + d2.getFullYear();
         result = hari + ', ' + tgl;
     }
+
     document.getElementById('out-tanggal').value = result;
     document.getElementById('preview-tanggal').innerText = result;
 }

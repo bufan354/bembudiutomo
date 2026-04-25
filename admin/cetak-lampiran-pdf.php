@@ -120,16 +120,21 @@ $download_name = "LAMPIRAN PINJAM BARANG - $acara - $tahun";
         }
 
         @media print {
-            body { background: white; margin: 0; padding: 0; }
+            body { background: white; margin: 0; padding: 0; -webkit-print-color-adjust: exact; }
             .page { 
-                margin: 0; 
+                margin: 0 !important; 
                 padding: 15mm 20mm; 
-                border: none; 
-                border-radius: 0; 
+                border: none !important; 
+                border-radius: 0 !important; 
                 width: 210mm; 
-                min-height: 297mm; 
-                box-shadow: none; 
-                background: white; 
+                min-height: 296mm; /* Mengurangi 1mm untuk toleransi PDF driver */
+                box-shadow: none !important; 
+                background: white !important; 
+                page-break-after: always; 
+                page-break-inside: avoid;
+            }
+            .page:last-of-type {
+                page-break-after: avoid !important;
             }
             .no-print { display: none !important; }
         }

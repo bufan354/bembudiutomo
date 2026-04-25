@@ -29,33 +29,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
         $p_name = sanitizeText($_POST['ttd_presma_name'] ?? '');
         $p_jab = sanitizeText($_POST['ttd_presma_jabatan'] ?? '');
 
-        dbQuery("REPLACE INTO pengaturan (kunci, nilai) VALUES ('ttd_warek_name', ?)", [$w_name], "s");
-        dbQuery("REPLACE INTO pengaturan (kunci, nilai) VALUES ('ttd_warek_jabatan', ?)", [$w_jab], "s");
-        dbQuery("REPLACE INTO pengaturan (kunci, nilai) VALUES ('ttd_presma_name', ?)", [$p_name], "s");
-        dbQuery("REPLACE INTO pengaturan (kunci, nilai) VALUES ('ttd_presma_jabatan', ?)", [$p_jab], "s");
+        dbUpsertPengaturan('ttd_warek_name', $w_name);
+        dbUpsertPengaturan('ttd_warek_jabatan', $w_jab);
+        dbUpsertPengaturan('ttd_presma_name', $p_name);
+        dbUpsertPengaturan('ttd_presma_jabatan', $p_jab);
 
         // Handle File Uploads
         if (!empty($_FILES['ttd_warek_image']['name'])) {
             $uploaded = uploadFile($_FILES['ttd_warek_image'], 'umum');
-            if ($uploaded) dbQuery("REPLACE INTO pengaturan (kunci, nilai) VALUES ('ttd_warek_image', ?)", [$uploaded], "s");
+            if ($uploaded) dbUpsertPengaturan('ttd_warek_image', $uploaded);
             else $error = "Gagal upload ttd_warek_image.";
         }
         if (!empty($_FILES['ttd_presma_image']['name'])) {
             $uploaded = uploadFile($_FILES['ttd_presma_image'], 'umum');
-            if ($uploaded) dbQuery("REPLACE INTO pengaturan (kunci, nilai) VALUES ('ttd_presma_image', ?)", [$uploaded], "s");
+            if ($uploaded) dbUpsertPengaturan('ttd_presma_image', $uploaded);
             else $error = "Gagal upload ttd_presma_image.";
         }
         if (!empty($_FILES['cap_panitia_image']['name'])) {
             $uploaded = uploadFile($_FILES['cap_panitia_image'], 'umum');
-            if ($uploaded) dbQuery("REPLACE INTO pengaturan (kunci, nilai) VALUES ('cap_panitia_image', ?)", [$uploaded], "s");
+            if ($uploaded) dbUpsertPengaturan('cap_panitia_image', $uploaded);
         }
         if (!empty($_FILES['cap_warek_image']['name'])) {
             $uploaded = uploadFile($_FILES['cap_warek_image'], 'umum');
-            if ($uploaded) dbQuery("REPLACE INTO pengaturan (kunci, nilai) VALUES ('cap_warek_image', ?)", [$uploaded], "s");
+            if ($uploaded) dbUpsertPengaturan('cap_warek_image', $uploaded);
         }
         if (!empty($_FILES['cap_presma_image']['name'])) {
             $uploaded = uploadFile($_FILES['cap_presma_image'], 'umum');
-            if ($uploaded) dbQuery("REPLACE INTO pengaturan (kunci, nilai) VALUES ('cap_presma_image', ?)", [$uploaded], "s");
+            if ($uploaded) dbUpsertPengaturan('cap_presma_image', $uploaded);
         }
         if(empty($error)) $success = "Pengaturan Tanda Tangan & Stempel berhasil diperbarui.";
     }

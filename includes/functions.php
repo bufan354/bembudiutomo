@@ -4,10 +4,39 @@
 //   ADDED: recordUserSession() — catat sesi login ke tabel user_sessions
 //   ADDED: updateUserTotpCounter() — update totp_last_counter di tabel users
 //   ADDED: totpVerifyWithReplay() — wrapper verifikasi TOTP dengan replay protection
-//   UNCHANGED: semua fungsi lain
+//   UNCHANGED: semua
+
+// Fungsi-fungsi pembantu lainnya
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../config/path-detection.php';
+
+/**
+ * Memastikan folder upload yang dibutuhkan tersedia.
+ * Berguna saat baru deploy ke server baru.
+ */
+function ensureUploadFolders() {
+    if (!defined('UPLOAD_PATH')) return;
+    try {
+        $folders = [
+            UPLOAD_PATH,
+            UPLOAD_PATH . '/ttd',
+            UPLOAD_PATH . '/umum',
+            UPLOAD_PATH . '/umum/lampiran'
+        ];
+        foreach ($folders as $folder) {
+            if (!is_dir($folder)) {
+                @mkdir($folder, 0777, true);
+                if (!file_exists($folder . '/index.php')) {
+                    @file_put_contents($folder . '/index.php', '<?php // Silence is golden');
+                }
+            }
+        }
+    } catch (Exception $e) {}
+}
+// Jalankan otomatis SETELAH UPLOAD_PATH didefinisikan
+ensureUploadFolders();
 
 // ============================================
 // FUNGSI HELPER PATH & URL (unchanged)
@@ -180,7 +209,6 @@ function uploadFile($file, $folder = 'umum') {
     if (function_exists('finfo_open')) {
         $finfo = finfo_open(FILEINFO_MIME_TYPE);
         $mime  = finfo_file($finfo, $file['tmp_name']);
-        finfo_close($finfo);
 
         if (!in_array($mime, ALLOWED_MIME_TYPES)) {
             $_SESSION['error'] = 'Tipe file tidak valid (MIME mismatch)';
