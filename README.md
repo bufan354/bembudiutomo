@@ -18,8 +18,8 @@ Sistem informasi berbasis web untuk pengelolaan administrasi, pengarsipan surat,
 ### 1. Download/Clone
 Buka terminal dan jalankan perintah:
 ```bash
-git clone https://github.com/username/repo-name.git
-cd repo-name
+git clone https://github.com/bufan354/bembudiutomo.git
+cd bembudiutomo
 ```
 
 ### 2. Konfigurasi Lingkungan
