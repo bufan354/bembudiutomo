@@ -1,5 +1,9 @@
 # Sistem Arsip & Administrasi BEM
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PHP Version](https://img.shields.io/badge/PHP-7.4%2B-blue.svg)](https://www.php.net/)
+
+
 Sistem informasi berbasis web untuk pengelolaan administrasi, pengarsipan surat, dan pembuatan surat otomatis untuk organisasi Badan Eksekutif Mahasiswa.
 
 ## 🚀 Fitur Utama
@@ -46,3 +50,7 @@ Sistem akan otomatis membuat folder `uploads/` dan sub-foldernya saat pertama ka
 
 ## 📄 Kontribusi
 Dikembangkan oleh Bufan Fadhilah.
+
+## ⚖️ Lisensi
+Proyek ini dilisensikan di bawah **MIT License**. Silakan lihat file `LICENSE` untuk informasi lebih lanjut.
+
