@@ -398,7 +398,7 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
 
             $sapaan = !empty($konten['sapaan_tujuan']) ? $konten['sapaan_tujuan'] . ' ' : '';
             $paragraf_permohonan  = 'Dengan ini kami menyampaikan '
-                . $surat['perihal']
+                . mb_strtolower($surat['perihal'])
                 . ' kepada '
                 . $sapaan
                 . $tujuan_baris_pertama
@@ -408,7 +408,7 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
             
             <?php
             // Paragraf Penutup: dinamis (mengikuti perihal)
-            $paragraf_penutup = 'Demikian surat ' . $surat['perihal'] . ' ini kami sampaikan, atas perhatian dan kerjasamanya kami ucapkan terimakasih.';
+            $paragraf_penutup = 'Demikian surat ' . mb_strtolower($surat['perihal']) . ' ini kami sampaikan, atas perhatian dan kerjasamanya kami ucapkan terimakasih.';
             ?>
             <p class="indent"><?php echo htmlspecialchars($paragraf_penutup); ?></p>
             
