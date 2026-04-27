@@ -430,7 +430,7 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                 return uploadUrl($val);
             }
             ?>
-            <div class="ttd-title">PANITIA PELAKSANA <?php echo strtoupper(htmlspecialchars($nama_panitia)); ?></div>
+            <div class="ttd-title">PANITIA PELAKSANA <?php echo strtoupper(htmlspecialchars($nama_panitia)); ?> <?php echo end($parts) ?: date('Y'); ?></div>
             
             <table class="ttd-table" style="margin-bottom: 5px;">
                 <tr>

@@ -698,7 +698,7 @@ if ($is_edit || $is_clone) {
                     </div>
                     <div class="form-group">
                         <label>Tanggal Dikirim (Untuk Arsip)</label>
-                        <input type="date" name="tanggal_dikirim" value="<?php 
+                        <input type="date" name="tanggal_dikirim" min="<?php echo date('Y-m-d'); ?>" value="<?php 
                             $tgl_val = $edit_data['tanggal_dikirim'] ?? '';
                             if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $tgl_val)) {
                                 $p = explode('/', $tgl_val);
@@ -781,7 +781,7 @@ if ($is_edit || $is_clone) {
                     <div class="wakpel-card">
                         <div class="wakpel-card-label"><i class="fas fa-calendar-day"></i> Hari & Tanggal</div>
                         <div class="date-range-wrap">
-                            <input type="date" id="tgl-mulai" onchange="formatTanggalRange()" value="<?php echo htmlspecialchars($edit_data['pelaksanaan_hari_tanggal_raw_start'] ?? ''); ?>">
+                            <input type="date" id="tgl-mulai" min="<?php echo date('Y-m-d'); ?>" onchange="formatTanggalRange()" value="<?php echo htmlspecialchars($edit_data['pelaksanaan_hari_tanggal_raw_start'] ?? ''); ?>">
                             <span style="color:var(--text-muted); font-size: 0.8rem;">selama</span>
                             <div style="display:flex; gap:5px; align-items:center;">
                                 <select id="durasi-hari" onchange="handleDurasiChange()" style="padding: 8px 12px; border-radius: 12px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.05); color: #fff; cursor: pointer; outline:none;">
@@ -1027,6 +1027,26 @@ if ($is_edit || $is_clone) {
 
 <!-- JAVASCRIPT -->
 <script>
+// Auto-update Nomor Urut based on Jenis Surat
+const nextNumbers = {
+    'L': '<?php echo $next_L; ?>',
+    'D': '<?php echo $next_D; ?>'
+};
+
+document.addEventListener('DOMContentLoaded', function() {
+    const jenisSuratSelect = document.getElementById('jenis_surat_select');
+    const nomorUrutInput = document.getElementById('nomor_urut_input');
+
+    if (jenisSuratSelect && nomorUrutInput) {
+        jenisSuratSelect.addEventListener('change', function() {
+            // Hanya update jika tidak dalam mode readonly (misal saat clone)
+            if (!nomorUrutInput.readOnly && nextNumbers[this.value]) {
+                nomorUrutInput.value = nextNumbers[this.value];
+            }
+        });
+    }
+});
+
 // ========== Template Picker Logic ==========
 function showTplResults(type) {
     document.querySelectorAll('.tpl-results').forEach(el => el.style.display = 'none');
