@@ -282,18 +282,18 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
 
         <!-- 2. META SURAT -->
         <!-- 
-            Kolom ke-4 (kanan) memiliki lebar TETAP sebesar 45mm.
-            Lebar ini cukup untuk menampung teks titi mangsa (misal: "Majalengka, 01 Mei 2026").
-            Titi mangsa rata KANAN di dalam kolom tersebut.
-            Blok Yth/tujuan/Di Tempat juga berada di kolom ke-4 yang sama,
-            sehingga tepi kiri tujuan otomatis sejajar dengan tepi kiri titi mangsa.
+            Kolom ke-4 (kanan): width:1% + nowrap pada baris titi mangsa.
+            Ini memaksa kolom menyusut PAS selebar teks titi mangsa.
+            Karena kolom pas selebar teks, maka text-align:left pun sudah rata kanan ke margin.
+            Tujuan di baris bawah memakai white-space:normal agar wrap di dalam 
+            lebar yang sama, sehingga tepi kiri tujuan = tepi kiri titi mangsa.
         -->
         <table class="meta-surat" style="width: 100%; border-collapse: collapse;">
             <tr>
                 <td class="col-label" style="width: 75px;">Nomor</td>
                 <td class="col-titik" style="width: 15px;">:</td>
                 <td style="vertical-align: top;"><?php echo htmlspecialchars($surat['nomor_surat']); ?></td>
-                <td style="width: 45mm; white-space: nowrap; text-align: right; vertical-align: top;">
+                <td style="width: 1%; white-space: nowrap; text-align: left; vertical-align: top;">
                     <?php echo htmlspecialchars($surat['tempat_tanggal']); ?>
                 </td>
             </tr>
@@ -322,14 +322,6 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
             </tr>
             <tr>
                 <td colspan="3"></td>
-                <!-- 
-                    Tujuan berada di kolom ke-4 yang SAMA dengan titi mangsa.
-                    white-space: normal  → teks bisa wrap (tidak memaksa kolom melebar)
-                    text-align: left     → rata kiri di dalam kolom
-                    vertical-align: top  → mulai dari atas
-                    width: 45mm          → lebar kolom sudah dikunci di baris pertama,
-                                          tujuan hanya mengikuti, tidak bisa memperlebar
-                -->
                 <td style="vertical-align: top; padding-top: 15px; white-space: normal; text-align: left;">
                     Yth,<br>
                     <b><?php echo nl2br(htmlspecialchars($surat['tujuan'])); ?></b><br>

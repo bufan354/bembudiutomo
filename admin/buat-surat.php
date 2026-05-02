@@ -48,12 +48,15 @@ if ($target_id > 0) {
 }
 
 function getLastSequence($jenis, $periode_id) {
-    $last = dbFetchOne("SELECT nomor_surat FROM arsip_surat WHERE periode_id = ? AND jenis_surat = ? ORDER BY id DESC LIMIT 1", [$periode_id, $jenis], "is");
-    if ($last && !empty($last['nomor_surat'])) {
-        $parts = explode('/', $last['nomor_surat']);
-        return (int)$parts[0];
-    }
-    return 0;
+    // Ambil nomor urut TERTINGGI (bukan terakhir di-insert)
+    // CAST prefix sebelum '/' pertama sebagai angka, lalu ambil MAX-nya
+    $last = dbFetchOne(
+        "SELECT MAX(CAST(SUBSTRING_INDEX(nomor_surat, '/', 1) AS UNSIGNED)) AS max_urut 
+         FROM arsip_surat 
+         WHERE periode_id = ? AND jenis_surat = ?",
+        [$periode_id, $jenis], "is"
+    );
+    return ($last && $last['max_urut']) ? (int)$last['max_urut'] : 0;
 }
 
 $count_L = getLastSequence('L', $periode_id);
@@ -269,11 +272,12 @@ if ($is_edit || $is_clone) {
 }
 
 .buat-surat-container .card {
+    position: relative;
     background: var(--card-bg);
     border: 1px solid var(--border-color);
     border-radius: 24px;
     margin-bottom: 24px;
-    overflow: hidden;
+    overflow: visible;
     backdrop-filter: blur(10px);
     box-shadow: var(--shadow-premium);
     transition: transform 0.3s ease, border-color 0.3s ease;
@@ -383,6 +387,7 @@ if ($is_edit || $is_clone) {
     display: none;
     box-shadow: 0 10px 40px rgba(0,0,0,0.5);
     animation: fadeInDown 0.2s ease-out;
+    padding-bottom: 8px;
 }
 
 @keyframes fadeInDown {
@@ -926,7 +931,7 @@ if ($is_edit || $is_clone) {
         </div>
 
         <!-- CARD 5: TANDA TANGAN PANITIA -->
-        <div class="card" style="overflow: visible;">
+        <div class="card">
             <div class="card-header"><i class="fas fa-pen-nib"></i> Penanggung Jawab / Panitia</div>
             <div class="card-body">
                 <div class="grid-2">
@@ -1048,10 +1053,25 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // ========== Template Picker Logic ==========
+// Helper: reset z-index semua card, lalu naikkan card yang punya dropdown aktif
+function _elevatePickerCard(resultsEl) {
+    document.querySelectorAll('.buat-surat-container .card').forEach(c => c.style.zIndex = '');
+    if (resultsEl) {
+        const card = resultsEl.closest('.card');
+        if (card) card.style.zIndex = '50';
+    }
+}
+function _resetPickerCards() {
+    document.querySelectorAll('.buat-surat-container .card').forEach(c => c.style.zIndex = '');
+}
+
 function showTplResults(type) {
     document.querySelectorAll('.tpl-results').forEach(el => el.style.display = 'none');
     const res = document.getElementById('results-' + type);
-    if(res) res.style.display = 'block';
+    if(res) {
+        res.style.display = 'block';
+        _elevatePickerCard(res);
+    }
 }
 
 function filterTpl(type) {
@@ -1087,12 +1107,14 @@ function filterTpl(type) {
 function selectTpl(targetId, value, type) {
     document.getElementById(targetId).value = value;
     document.getElementById('results-' + type).style.display = 'none';
+    _resetPickerCards();
 }
 
 function selectKegiatan(data) {
     document.getElementById('input_nama_kegiatan').value = data.nama;
     document.getElementById('kode_kegiatan_input').value = data.kode;
     document.getElementById('results-kegiatan').style.display = 'none';
+    _resetPickerCards();
 }
 
 function selectSavedPanitia(role, data) {
@@ -1113,6 +1135,7 @@ function selectSavedPanitia(role, data) {
     previewImg.src = uploadBase + data.ttd;
     
     document.getElementById('results-panitia-' + role).style.display = 'none';
+    _resetPickerCards();
 }
 
 function handleCustomName(role, val) {
@@ -1126,6 +1149,7 @@ function handleCustomName(role, val) {
 document.addEventListener('click', function(e) {
     if (!e.target.closest('.tpl-picker')) {
         document.querySelectorAll('.tpl-results').forEach(el => el.style.display = 'none');
+        _resetPickerCards();
     }
 });
 
