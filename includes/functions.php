@@ -330,6 +330,48 @@ function formatTanggalDb($date) {
     return date('Y-m-d', strtotime($date));
 }
 
+/**
+ * Format tanggal ke Bahasa Indonesia: "3 Mei 2026"
+ * Bisa dipakai untuk tanggal sekarang (tanpa argumen) atau timestamp tertentu.
+ *
+ * @param int|null $timestamp  Unix timestamp, null = sekarang
+ * @param bool     $withDay    Sertakan nama hari? ("Sabtu, 3 Mei 2026")
+ * @return string
+ */
+function tanggalIndonesia(?int $timestamp = null, bool $withDay = false): string {
+    if ($timestamp === null) $timestamp = time();
+
+    $bulan = [
+        1 => 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+    ];
+    $hari = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+
+    $hasil = date('j', $timestamp) . ' '
+           . $bulan[(int)date('n', $timestamp)] . ' '
+           . date('Y', $timestamp);
+
+    if ($withDay) {
+        $hasil = $hari[(int)date('w', $timestamp)] . ', ' . $hasil;
+    }
+
+    return $hasil;
+}
+
+/**
+ * Konversi nama bulan Inggris → Indonesia dalam sebuah string.
+ * Berguna untuk data lama yang tersimpan di DB dengan bulan Inggris.
+ * Contoh: "Majalengka, 3 May 2026" → "Majalengka, 3 Mei 2026"
+ *
+ * @param string $text
+ * @return string
+ */
+function convertBulanKeIndonesia(string $text): string {
+    $en = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    $id = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+    return str_ireplace($en, $id, $text);
+}
+
 // ============================================
 // FUNGSI NAVIGASI & SESSION
 // ============================================

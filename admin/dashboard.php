@@ -30,7 +30,7 @@ $showLetterStats  = ($isSuperadmin || $admin_role === 'sekretaris');
     </div>
     <div class="date-display">
         <i class="far fa-calendar-alt"></i>
-        <?php echo date('d F Y'); ?>
+        <?php echo tanggalIndonesia(); ?>
     </div>
 </div>
 

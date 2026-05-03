@@ -294,7 +294,7 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                 <td class="col-titik" style="width: 15px;">:</td>
                 <td style="vertical-align: top;"><?php echo htmlspecialchars($surat['nomor_surat']); ?></td>
                 <td style="width: 1%; white-space: nowrap; text-align: left; vertical-align: top;">
-                    <?php echo htmlspecialchars($surat['tempat_tanggal']); ?>
+                    <?php echo htmlspecialchars(convertBulanKeIndonesia($surat['tempat_tanggal'])); ?>
                 </td>
             </tr>
             <tr>
@@ -399,6 +399,8 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                     $suffix = ' untuk dapat menggunakan fasilitas tersebut.';
                 } else if (strpos($perihal_lower, 'delegasi') !== false || strpos($perihal_lower, 'utusan') !== false) {
                     $suffix = ' untuk mendelegasikan perwakilannya pada kegiatan tersebut.';
+                } else if (strpos($perihal_lower, 'pemberitahuan') !== false) {
+                    $suffix = ' terkait kegiatan tersebut.';
                 } else {
                     $suffix = ' demi mendukung terselenggaranya acara tersebut.';
                 }

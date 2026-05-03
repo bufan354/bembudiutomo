@@ -216,7 +216,7 @@ $def = [
     'sapaan_tujuan'            => '',
     'tanggal_dikirim'          => 'Belum Di kirim',
     'perihal'                  => '',
-    'tempat_tanggal'           => 'Majalengka, ' . date('j F Y'),
+    'tempat_tanggal'           => 'Majalengka, ' . tanggalIndonesia(),
     'tujuan'                   => "",
     'nama_kegiatan'            => '',
     'tema'                     => '',
@@ -699,7 +699,7 @@ if ($is_edit || $is_clone) {
                 <div class="grid-2">
                     <div class="form-group">
                         <label>Titimangsa & Tempat Tanggal</label>
-                        <input type="text" name="tempat_tanggal" value="<?php echo htmlspecialchars($edit_data['tempat_tanggal']); ?>" required>
+                        <input type="text" name="tempat_tanggal" value="<?php echo htmlspecialchars(convertBulanKeIndonesia($edit_data['tempat_tanggal'])); ?>" required>
                     </div>
                     <div class="form-group">
                         <label>Tanggal Dikirim (Untuk Arsip)</label>
