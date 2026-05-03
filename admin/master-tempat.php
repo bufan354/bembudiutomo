@@ -1,5 +1,5 @@
 <?php
-// admin/master-barang.php
+// admin/master-tempat.php
 require_once __DIR__ . '/header.php';
 
 requireSekretaris();
@@ -15,32 +15,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $_POST['action'] ?? '';
         
         if ($action === 'add') {
-            $nama = sanitizeText($_POST['nama_barang'] ?? '');
-            $satuan = sanitizeText($_POST['satuan'] ?? 'pcs');
+            $nama = sanitizeText($_POST['nama_tempat'] ?? '');
             if (empty($nama)) {
-                $error = 'Nama barang tidak boleh kosong.';
+                $error = 'Nama tempat tidak boleh kosong.';
             } else {
                 try {
-                    dbQuery("INSERT INTO barang_master (nama_barang, satuan) VALUES (?, ?)", [$nama, $satuan], "ss");
-                    $success = 'Barang berhasil ditambahkan.';
-                    auditLog('ADD_BARANG', 'barang_master', null, 'Menambah barang: ' . $nama);
+                    dbQuery("INSERT INTO tempat_master (nama_tempat) VALUES (?)", [$nama], "s");
+                    $success = 'Tempat berhasil ditambahkan.';
+                    auditLog('ADD_TEMPAT', 'tempat_master', null, 'Menambah tempat: ' . $nama);
                 } catch (Exception $e) {
-                    $error = 'Gagal menambah barang: ' . $e->getMessage();
+                    $error = 'Gagal menambah tempat: ' . $e->getMessage();
                 }
             }
         } elseif ($action === 'edit') {
             $id = (int)($_POST['id'] ?? 0);
-            $nama = sanitizeText($_POST['nama_barang'] ?? '');
-            $satuan = sanitizeText($_POST['satuan'] ?? 'pcs');
+            $nama = sanitizeText($_POST['nama_tempat'] ?? '');
             if (empty($nama) || $id <= 0) {
                 $error = 'Data tidak valid.';
             } else {
                 try {
-                    dbUpdate("UPDATE barang_master SET nama_barang = ?, satuan = ? WHERE id = ?", [$nama, $satuan, $id], "ssi");
-                    $success = 'Barang berhasil diperbarui.';
-                    auditLog('EDIT_BARANG', 'barang_master', $id, 'Update barang ke: ' . $nama);
+                    dbUpdate("UPDATE tempat_master SET nama_tempat = ? WHERE id = ?", [$nama, $id], "si");
+                    $success = 'Tempat berhasil diperbarui.';
+                    auditLog('EDIT_TEMPAT', 'tempat_master', $id, 'Update tempat ke: ' . $nama);
                 } catch (Exception $e) {
-                    $error = 'Gagal memperbarui barang: ' . $e->getMessage();
+                    $error = 'Gagal memperbarui tempat: ' . $e->getMessage();
                 }
             }
         } elseif ($action === 'delete') {
@@ -49,11 +47,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error = 'ID tidak valid.';
             } else {
                 try {
-                    dbQuery("DELETE FROM barang_master WHERE id = ?", [$id], "i");
-                    $success = 'Barang berhasil dihapus.';
-                    auditLog('DELETE_BARANG', 'barang_master', $id, 'Menghapus barang ID: ' . $id);
+                    dbQuery("DELETE FROM tempat_master WHERE id = ?", [$id], "i");
+                    $success = 'Tempat berhasil dihapus.';
+                    auditLog('DELETE_TEMPAT', 'tempat_master', $id, 'Menghapus tempat ID: ' . $id);
                 } catch (Exception $e) {
-                    $error = 'Gagal menghapus barang: ' . $e->getMessage();
+                    $error = 'Gagal menghapus tempat: ' . $e->getMessage();
                 }
             }
         }
@@ -61,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // Fetch Items
-$items = dbFetchAll("SELECT * FROM barang_master ORDER BY nama_barang ASC");
+$items = dbFetchAll("SELECT * FROM tempat_master ORDER BY nama_tempat ASC");
 ?>
 
 <style>
@@ -255,12 +253,12 @@ $items = dbFetchAll("SELECT * FROM barang_master ORDER BY nama_barang ASC");
 }
 </style>
 
-<div class="master-barang-container">
+<div class="master-tempat-container">
     <div class="card">
         <div class="card-header">
-            <h2><i class="fas fa-boxes"></i> Master Inventaris Barang</h2>
+            <h2><i class="fas fa-map-marker-alt"></i> Master Inventaris Tempat</h2>
             <button class="btn-premium" onclick="openModal('add')">
-                <i class="fas fa-plus"></i> Tambah Barang
+                <i class="fas fa-plus"></i> Tambah Tempat
             </button>
         </div>
         
@@ -269,8 +267,7 @@ $items = dbFetchAll("SELECT * FROM barang_master ORDER BY nama_barang ASC");
                 <thead>
                     <tr>
                         <th>No</th>
-                        <th>Nama Barang</th>
-                        <th>Satuan</th>
+                        <th>Nama Tempat</th>
                         <th>Aksi</th>
                     </tr>
                 </thead>
@@ -278,21 +275,20 @@ $items = dbFetchAll("SELECT * FROM barang_master ORDER BY nama_barang ASC");
                     <?php if (empty($items)): ?>
                         <tr>
                             <td colspan="3" style="text-align:center; color:#555; padding: 40px;">
-                                <i class="fas fa-box-open" style="font-size:2rem; display:block; margin-bottom:10px;"></i>
-                                Belum ada data barang.
+                                <i class="fas fa-building" style="font-size:2rem; display:block; margin-bottom:10px;"></i>
+                                Belum ada data tempat.
                             </td>
                         </tr>
                     <?php else: ?>
                         <?php foreach ($items as $idx => $item): ?>
                             <tr>
                                 <td><?php echo $idx + 1; ?></td>
-                                <td class="item-name"><?php echo htmlspecialchars($item['nama_barang']); ?></td>
-                                <td><?php echo htmlspecialchars($item['satuan'] ?? 'pcs'); ?></td>
+                                <td class="item-name"><?php echo htmlspecialchars($item['nama_tempat']); ?></td>
                                 <td>
-                                    <button class="btn-icon" onclick="openModal('edit', <?php echo $item['id']; ?>, '<?php echo htmlspecialchars(addslashes($item['nama_barang'])); ?>', '<?php echo htmlspecialchars(addslashes($item['satuan'] ?? 'pcs')); ?>')">
+                                    <button class="btn-icon" onclick="openModal('edit', <?php echo $item['id']; ?>, '<?php echo htmlspecialchars(addslashes($item['nama_tempat'])); ?>')">
                                         <i class="fas fa-edit"></i>
                                     </button>
-                                    <form method="POST" style="display:inline;" onsubmit="return confirm('Hapus barang ini?')">
+                                    <form method="POST" style="display:inline;" onsubmit="return confirm('Hapus tempat ini?')">
                                         <?php echo csrfField(); ?>
                                         <input type="hidden" name="action" value="delete">
                                         <input type="hidden" name="id" value="<?php echo $item['id']; ?>">
@@ -314,7 +310,7 @@ $items = dbFetchAll("SELECT * FROM barang_master ORDER BY nama_barang ASC");
 <div id="modalMb" class="modal-mb">
     <div class="modal-content-mb">
         <div class="modal-header-mb">
-            <h3 id="modalTitle">Tambah Barang</h3>
+            <h3 id="modalTitle">Tambah Tempat</h3>
             <button class="modal-close" onclick="closeModal()">&times;</button>
         </div>
         <form method="POST">
@@ -322,10 +318,8 @@ $items = dbFetchAll("SELECT * FROM barang_master ORDER BY nama_barang ASC");
             <input type="hidden" name="action" id="modalAction" value="add">
             <input type="hidden" name="id" id="modalId" value="">
             <div class="modal-body-mb">
-                <label style="color:#777; font-size:0.8rem; margin-bottom:8px; display:block;">NAMA BARANG</label>
-                <input type="text" name="nama_barang" id="modalInput" required placeholder="Contoh: Proyektor Epson" autofocus>
-                <label style="color:#777; font-size:0.8rem; margin-bottom:8px; display:block; margin-top:15px;">SATUAN (Contoh: pcs, unit, buah, pax)</label>
-                <input type="text" name="satuan" id="modalSatuan" required placeholder="Contoh: pcs" value="pcs">
+                <label style="color:#777; font-size:0.8rem; margin-bottom:8px; display:block;">NAMA TEMPAT</label>
+                <input type="text" name="nama_tempat" id="modalInput" required placeholder="Contoh: Aula Wisata Intelektual" autofocus>
             </div>
             <div style="text-align:right;">
                 <button type="button" class="btn-outline" onclick="closeModal()" style="margin-right:10px; background:none; border:1px solid #444; color:#777; padding:8px 16px; border-radius:8px; cursor:pointer;">Batal</button>
@@ -336,25 +330,22 @@ $items = dbFetchAll("SELECT * FROM barang_master ORDER BY nama_barang ASC");
 </div>
 
 <script>
-function openModal(mode, id = null, name = '', satuan = 'pcs') {
+function openModal(mode, id = null, name = '') {
     const modal = document.getElementById('modalMb');
     const title = document.getElementById('modalTitle');
     const action = document.getElementById('modalAction');
     const input = document.getElementById('modalInput');
-    const inputSatuan = document.getElementById('modalSatuan');
     const idField = document.getElementById('modalId');
     
     if (mode === 'add') {
-        title.innerText = 'Tambah Barang Baru';
+        title.innerText = 'Tambah Tempat Baru';
         action.value = 'add';
         input.value = '';
-        inputSatuan.value = 'pcs';
         idField.value = '';
     } else {
-        title.innerText = 'Edit Barang';
+        title.innerText = 'Edit Tempat';
         action.value = 'edit';
         input.value = name;
-        inputSatuan.value = satuan;
         idField.value = id;
     }
     

@@ -159,7 +159,7 @@ $download_name = "LAMPIRAN PINJAM BARANG - $acara - $tahun";
             <thead>
                 <tr>
                     <th style="width: 50px;">No.</th>
-                    <th>Nama Barang</th>
+                    <th>Nama Barang / Tempat</th>
                     <th style="width: 150px;">Jumlah</th>
                 </tr>
             </thead>

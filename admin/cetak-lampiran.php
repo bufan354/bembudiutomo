@@ -48,7 +48,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 $templates = dbFetchAll("SELECT * FROM surat_templates WHERE periode_id = ? AND jenis = 'kegiatan'", [$periode_id], "i");
 $list_kegiatan = $templates;
 
-$items = dbFetchAll("SELECT * FROM barang_master ORDER BY nama_barang ASC");
+$barang = dbFetchAll("SELECT id, nama_barang as nama, satuan, 'barang' as type FROM barang_master ORDER BY nama_barang ASC");
+$tempat = dbFetchAll("SELECT id, nama_tempat as nama, '' as satuan, 'tempat' as type FROM tempat_master ORDER BY nama_tempat ASC");
+
+// UID akan diberikan langsung di bagian rendering UI
 ?>
 
 <style>
@@ -186,10 +189,52 @@ $items = dbFetchAll("SELECT * FROM barang_master ORDER BY nama_barang ASC");
     width: 150px;
 }
 
-.qty-input {
-    width: 100px !important;
+.qty-wrapper {
+    display: inline-flex;
+    align-items: center;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    overflow: hidden;
+    height: 36px;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+}
+.qty-btn {
+    background: rgba(255,255,255,0.03);
+    border: none;
+    color: var(--accent-color);
+    width: 32px;
+    height: 100%;
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.qty-btn:hover {
+    background: rgba(74,144,226,0.2);
+    color: #fff;
+}
+.barang-qty {
+    width: 40px !important;
     text-align: center;
-    padding: 8px !important;
+    padding: 0 !important;
+    background: transparent !important;
+    border: none !important;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 600;
+    -moz-appearance: textfield;
+}
+.barang-qty::-webkit-outer-spin-button,
+.barang-qty::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+.barang-qty:focus {
+    outline: none;
+    box-shadow: none !important;
 }
 
 .notice-bar {
@@ -286,8 +331,13 @@ $items = dbFetchAll("SELECT * FROM barang_master ORDER BY nama_barang ASC");
                     <label>Tanggal Pelaksanaan</label>
                     <div class="date-range-wrap">
                         <input type="date" id="tgl-mulai" onchange="formatTanggalRange()" required>
-                        <span style="color:#444;">sampai</span>
-                        <input type="date" id="tgl-selesai" onchange="formatTanggalRange()">
+                        <span style="color:#777; font-size:0.9rem; margin:0 5px;">Selama</span>
+                        <div class="qty-wrapper" style="flex: none; width: auto;">
+                            <button type="button" class="qty-btn" onclick="const i=document.getElementById('jml-hari'); if(i.value>1) {i.stepDown(); formatTanggalRange();} ">-</button>
+                            <input type="number" id="jml-hari" class="barang-qty" onchange="formatTanggalRange()" onkeyup="formatTanggalRange()" min="1" value="1" style="width: 40px !important;">
+                            <button type="button" class="qty-btn" onclick="const i=document.getElementById('jml-hari'); i.stepUp(); formatTanggalRange();">+</button>
+                        </div>
+                        <span style="color:#777; font-size:0.9rem; margin-left: 5px;">Hari</span>
                     </div>
                     <div class="preview-bar" id="preview-tanggal">Pilih tanggal di atas...</div>
                     <!-- Input hidden untuk dikirim ke PHP -->
@@ -313,9 +363,10 @@ $items = dbFetchAll("SELECT * FROM barang_master ORDER BY nama_barang ASC");
             </div>
         </div>
 
-        <div class="card">
+        <!-- CARD PILIH BARANG -->
+        <div class="card" style="margin-bottom: 24px;">
             <div class="card-header">
-                <i class="fas fa-list-ul"></i>
+                <i class="fas fa-boxes"></i>
                 <h2>Pilih Barang & Jumlah</h2>
             </div>
 
@@ -332,25 +383,72 @@ $items = dbFetchAll("SELECT * FROM barang_master ORDER BY nama_barang ASC");
                     </tr>
                 </thead>
                 <tbody>
-                    <?php if (empty($items)): ?>
+                    <?php if (empty($barang)): ?>
                         <tr>
                             <td colspan="2" style="text-align:center; padding: 40px; color:#555;">
                                 Master barang kosong. Silakan isi di <a href="master-barang.php" style="color:var(--accent-color);">Master Barang</a>.
                             </td>
                         </tr>
                     <?php else: ?>
-                        <?php foreach ($items as $item): ?>
+                        <?php foreach ($barang as $item): $uid = 'b_' . $item['id']; ?>
                             <tr>
-                                <td><?php echo htmlspecialchars($item['nama_barang']); ?></td>
-                                <td style="text-align:center;">
-                                    <input type="number" name="qty[<?php echo $item['id']; ?>]" class="qty-input" min="0" value="0" onfocus="this.select()">
-                                    <input type="hidden" name="item_name[<?php echo $item['id']; ?>]" value="<?php echo htmlspecialchars($item['nama_barang']); ?>">
+                                <td>
+                                    <?php echo htmlspecialchars($item['nama']); ?>
+                                </td>
+                                <td>
+                                    <div style="display:flex; justify-content:flex-end; align-items:center; gap:12px;">
+                                        <!-- Class qty-input digunakan oleh JS untuk validasi 'total > 0' -->
+                                        <div class="qty-wrapper">
+                                            <button type="button" class="qty-btn" onclick="const i=this.nextElementSibling; if(i.value>0) i.stepDown();">-</button>
+                                            <input type="number" name="qty[<?php echo $uid; ?>]" class="qty-input barang-qty" min="0" value="0" onfocus="this.select()">
+                                            <button type="button" class="qty-btn" onclick="this.previousElementSibling.stepUp();">+</button>
+                                        </div>
+                                        <span style="font-size: 0.85rem; color: #aaa; min-width: 40px; text-align: left;"><?php echo htmlspecialchars($item['satuan'] ?? 'pcs'); ?></span>
+                                    </div>
+                                    <input type="hidden" name="item_name[<?php echo $uid; ?>]" value="<?php echo htmlspecialchars($item['nama'] . ' (' . ($item['satuan'] ?? 'pcs') . ')'); ?>">
                                 </td>
                             </tr>
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </tbody>
             </table>
+        </div>
+
+        <!-- CARD PILIH TEMPAT -->
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-map-marker-alt"></i>
+                <h2>Pilih Tempat Kegiatan</h2>
+            </div>
+            
+            <div class="notice-bar">
+                <i class="fas fa-info-circle"></i>
+                <span>Aktifkan toggle untuk memilih tempat yang akan dipinjam.</span>
+            </div>
+
+            <?php if (empty($tempat)): ?>
+                <div style="text-align:center; padding: 20px; color:#555; background: rgba(255,255,255,0.02); border-radius: 12px; border: 1px solid var(--border-color);">
+                    Belum ada data tempat. Silakan isi di <a href="master-tempat.php" style="color:var(--accent-color);">Master Tempat</a>.
+                </div>
+            <?php else: ?>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    <?php foreach ($tempat as $item): $uid = 't_' . $item['id']; ?>
+                        <div class="switch-container" onclick="const cb = this.querySelector('input[type=checkbox]'); if(event.target.tagName !== 'INPUT' && !event.target.classList.contains('slider')) { cb.checked = !cb.checked; }">
+                            <div class="switch-label">
+                                <i class="fas fa-building"></i>
+                                <span><?php echo htmlspecialchars($item['nama']); ?></span>
+                                <span style="font-size: 0.7rem; color: #888; background: #222; padding: 2px 6px; border-radius: 4px; margin-left: 8px;">Tempat</span>
+                            </div>
+                            <label class="switch" style="margin:0;" onclick="event.stopPropagation();">
+                                <!-- Kita gunakan checkbox, dan JS akan map nilainya ke 1 atau 0 -->
+                                <input type="checkbox" name="qty[<?php echo $uid; ?>]" value="1" class="qty-input tempat-toggle">
+                                <span class="slider"></span>
+                            </label>
+                            <input type="hidden" name="item_name[<?php echo $uid; ?>]" value="<?php echo htmlspecialchars($item['nama']); ?>">
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
         </div>
 
         <div class="actions-bar">
@@ -376,16 +474,25 @@ function submitAction(type) {
     const form = document.getElementById('printForm');
     const actionInput = document.getElementById('form-action');
     
-    // Validasi barang
+    // Validasi barang/tempat
     const inputs = document.querySelectorAll('.qty-input');
     let total = 0;
-    inputs.forEach(input => total += parseInt(input.value || 0));
+    inputs.forEach(input => {
+        if(input.type === 'checkbox') {
+            total += input.checked ? 1 : 0;
+        } else {
+            total += parseInt(input.value || 0);
+        }
+    });
     
     if (total <= 0) {
-        alert('Minimal pilih 1 barang.');
+        alert('Minimal pilih 1 tempat atau 1 barang.');
         return;
     }
 
+    // Ubah status checkbox agar hanya mengirim value jika diceklis,
+    // dan pastikan input number mengirim nilai default form (browser native)
+    
     actionInput.value = type;
     
     if (type === 'print') {
@@ -430,7 +537,7 @@ const BULAN_ID = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agus
 
 function formatTanggalRange() {
     const mulai   = document.getElementById('tgl-mulai').value;
-    const selesai = document.getElementById('tgl-selesai').value;
+    const jmlHari = parseInt(document.getElementById('jml-hari').value) || 1;
     
     if (!mulai) { 
         document.getElementById('preview-tanggal').innerText = 'Pilih tanggal di atas...'; 
@@ -441,10 +548,12 @@ function formatTanggalRange() {
     document.getElementById('out-tahun').value = d1.getFullYear(); // Update tahun otomatis
     
     let result = '';
-    if (!selesai || selesai === mulai) {
+    if (jmlHari <= 1) {
         result = HARI_ID[d1.getDay()] + ', ' + d1.getDate() + ' ' + BULAN_ID[d1.getMonth()] + ' ' + d1.getFullYear();
     } else {
-        const d2 = new Date(selesai + 'T00:00:00');
+        const d2 = new Date(d1);
+        d2.setDate(d2.getDate() + (jmlHari - 1));
+        
         const hari = HARI_ID[d1.getDay()] === HARI_ID[d2.getDay()] ? HARI_ID[d1.getDay()] : HARI_ID[d1.getDay()] + '-' + HARI_ID[d2.getDay()];
         const bln1 = BULAN_ID[d1.getMonth()], bln2 = BULAN_ID[d2.getMonth()];
         const tgl  = bln1 === bln2 && d1.getFullYear() === d2.getFullYear()
@@ -458,9 +567,9 @@ function formatTanggalRange() {
 }
 
 function resetAll() {
-    if (confirm('Kosongkan semua jumlah input?')) {
-        const inputs = document.querySelectorAll('.qty-input');
-        inputs.forEach(input => input.value = 0);
+    if (confirm('Kosongkan semua pilihan dan jumlah input?')) {
+        document.querySelectorAll('.barang-qty').forEach(input => input.value = 0);
+        document.querySelectorAll('.tempat-toggle').forEach(input => input.checked = false);
     }
 }
 

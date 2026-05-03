@@ -467,6 +467,10 @@ if (isset($page_css)) {
                class="<?php echo $current_page === 'master-barang.php' ? 'active' : ''; ?>">
                 <i class="fas fa-boxes"></i><span>Master Barang</span>
             </a>
+            <a href="master-tempat.php"
+               class="<?php echo $current_page === 'master-tempat.php' ? 'active' : ''; ?>">
+                <i class="fas fa-map-marker-alt"></i><span>Master Tempat</span>
+            </a>
             <a href="cetak-lampiran.php"
                class="<?php echo $current_page === 'cetak-lampiran.php' ? 'active' : ''; ?>">
                 <i class="fas fa-print"></i><span>Cetak Lampiran</span>
