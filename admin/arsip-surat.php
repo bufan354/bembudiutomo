@@ -102,11 +102,20 @@ if (isset($_GET['hapus']) && is_numeric($_GET['hapus'])) {
         if ($surat_target) {
             $can_delete = true;
             // Validasi: Jika surat keluar/dalam, hanya boleh hapus yang ID-nya paling terakhir (mencegah loncat nomor)
+            // EXCEPTION: Surat dalam grup boleh dihapus kapan saja karena sibling lain masih memegang nomor yang sama
             if (in_array($surat_target['jenis_surat'], ['L', 'D'])) {
                 $max_id_keluar = dbFetchOne("SELECT MAX(id) as last_id FROM arsip_surat WHERE periode_id = ? AND jenis_surat = ?", [$periode_id, $surat_target['jenis_surat']], "is")['last_id'];
                 if ($id_hapus != $max_id_keluar) {
-                    $can_delete = false;
-                    $error = "Hanya arsip surat keluar urutan PALING AKHIR yang diizinkan untuk dihapus guna menjaga integritas nomor urut. Gunakan fitur 'Edit' untuk merevisi surat di tengah urutan.";
+                    // Cek apakah surat ini punya sibling (grup) — jika ya, nomor aman
+                    $sibling_count = (int)dbFetchOne(
+                        "SELECT COUNT(*) as cnt FROM arsip_surat WHERE nomor_surat = ? AND periode_id = ? AND id != ?",
+                        [$surat_target['nomor_surat'], $periode_id, $id_hapus], "sii"
+                    )['cnt'];
+                    if ($sibling_count === 0) {
+                        // Tidak ada sibling — nomor akan hilang jika dihapus
+                        $can_delete = false;
+                        $error = "Hanya arsip surat keluar urutan PALING AKHIR yang diizinkan untuk dihapus guna menjaga integritas nomor urut. Gunakan fitur 'Edit' untuk merevisi surat di tengah urutan.";
+                    }
                 }
             }
             
@@ -693,11 +702,12 @@ $css = "
                                             </button>
                                         <?php endif; ?>
                                         
-                                        <?php if ($jenis === 'M' || $child['id'] == $latest_keluar_id): ?>
-                                            <button type="button" 
-                                               onclick="handleHapusArsip(<?php echo $child['id']; ?>, '<?php echo addslashes($child['nomor_surat']); ?>')"
-                                               class="btn-delete" title="Hapus"><i class="fas fa-trash-alt"></i></button>
-                                        <?php endif; ?>
+                                        <?php 
+                                        // Child dalam grup selalu bisa dihapus karena sibling lain masih memegang nomor yang sama
+                                        ?>
+                                        <button type="button" 
+                                           onclick="handleHapusArsip(<?php echo $child['id']; ?>, '<?php echo addslashes($child['nomor_surat']); ?>')"
+                                           class="btn-delete" title="Hapus"><i class="fas fa-trash-alt"></i></button>
                                     </div>
                                 </td>
                             </tr>
