@@ -17,38 +17,74 @@ $error = '';
 if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     csrfVerify();
     $del_id = (int)$_GET['delete'];
-    $res = dbQuery("DELETE FROM lampiran_pinjam WHERE id = ? AND periode_id = ?", [$del_id, $periode_id]);
-    if ($res) {
-        $success = "Data lampiran berhasil dihapus.";
+    
+    // Cek apakah arsip lampiran ini terikat dengan surat
+    $is_terikat = false;
+    $surat_terkait = [];
+    $surat_list = dbFetchAll("SELECT nomor_surat, konten_surat FROM arsip_surat WHERE periode_id = ?", [$periode_id], "i");
+    foreach ($surat_list as $s) {
+        $konten = json_decode($s['konten_surat'], true);
+        if (isset($konten['lampiran_internal_ids']) && is_array($konten['lampiran_internal_ids'])) {
+            if (in_array($del_id, $konten['lampiran_internal_ids'])) {
+                $is_terikat = true;
+                $surat_terkait[] = $s['nomor_surat'];
+            }
+        }
+    }
+    
+    if ($is_terikat) {
+        $error = "Tidak bisa menghapus arsip lampiran karena masih terikat dengan surat (" . htmlspecialchars($surat_terkait[0]) . "). Lampiran hanya bisa dihapus jika berdiri sendiri (tidak terikat pada surat apapun).";
     } else {
-        $error = "Gagal menghapus data.";
+        $res = dbQuery("DELETE FROM lampiran_pinjam WHERE id = ? AND periode_id = ?", [$del_id, $periode_id]);
+        if ($res) {
+            $success = "Data lampiran berhasil dihapus karena berdiri sendiri (tidak terikat pada surat).";
+        } else {
+            $error = "Gagal menghapus data.";
+        }
     }
 }
 
-// --- ACTION HANDLER: UPDATE ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update') {
+
+// --- ACTION HANDLER: DUPLICATE ---
+if (isset($_GET['duplicate']) && is_numeric($_GET['duplicate'])) {
     csrfVerify();
-    $id      = (int)$_POST['id'];
-    $acara   = trim($_POST['nama_acara'] ?? '');
-    $tanggal = trim($_POST['tanggal_kegiatan'] ?? '');
-    $tahun   = trim($_POST['tahun'] ?? '');
+    $dup_id = (int)$_GET['duplicate'];
     
-    if (empty($acara) || empty($tanggal)) {
-        $error = "Nama acara dan tanggal wajib diisi.";
-    } else {
-        $res = dbQuery("UPDATE lampiran_pinjam SET nama_acara = ?, tanggal_kegiatan = ?, tahun = ? WHERE id = ? AND periode_id = ?", [
-            $acara, $tanggal, $tahun, $id, $periode_id
+    $ori = dbFetchOne("SELECT * FROM lampiran_pinjam WHERE id = ? AND periode_id = ?", [$dup_id, $periode_id], "ii");
+    if ($ori) {
+        $new_nama = $ori['nama_acara'] . " (copy)";
+        $res = dbQuery("INSERT INTO lampiran_pinjam (nama_acara, tanggal_kegiatan, tahun, barang_json, periode_id) VALUES (?, ?, ?, ?, ?)", [
+            $new_nama,
+            $ori['tanggal_kegiatan'],
+            $ori['tahun'],
+            $ori['barang_json'],
+            $periode_id
         ]);
         if ($res) {
-            $success = "Data lampiran berhasil diperbarui.";
+            $success = "Data lampiran berhasil diduplikasi.";
         } else {
-            $error = "Gagal memperbarui data.";
+            $error = "Gagal menduplikasi data.";
         }
+    } else {
+        $error = "Data yang akan diduplikasi tidak ditemukan.";
     }
 }
 
 // Ambil data arsip lampiran
 $list_lampiran = dbFetchAll("SELECT * FROM lampiran_pinjam WHERE periode_id = ? ORDER BY created_at DESC", [$periode_id], "i");
+
+// Hitung keterkaitan surat untuk visualisasi
+$surat_list_all = dbFetchAll("SELECT nomor_surat, konten_surat FROM arsip_surat WHERE periode_id = ?", [$periode_id], "i");
+$lampiran_to_surat = [];
+foreach ($surat_list_all as $s) {
+    $konten = json_decode($s['konten_surat'], true);
+    if (isset($konten['lampiran_internal_ids']) && is_array($konten['lampiran_internal_ids'])) {
+        foreach ($konten['lampiran_internal_ids'] as $l_id) {
+            $lampiran_to_surat[$l_id][] = $s['nomor_surat'];
+        }
+    }
+}
+
 ?>
 
 <div class="arsip-surat-container">
@@ -97,12 +133,28 @@ $list_lampiran = dbFetchAll("SELECT * FROM lampiran_pinjam WHERE periode_id = ? 
                         <?php foreach($list_lampiran as $idx => $l): 
                             $barang_data = json_decode($l['barang_json'], true) ?: [];
                             $jml_barang = count($barang_data);
+                            $terkait = $lampiran_to_surat[$l['id']] ?? [];
                         ?>
                         <tr style="border-bottom: 1px solid var(--border-color); transition: 0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.02)'" onmouseout="this.style.background='transparent'">
                             <td style="padding: 15px;"><?php echo $idx + 1; ?></td>
                             <td style="padding: 15px;">
                                 <div style="font-weight:600; color:var(--accent-color);"><?php echo htmlspecialchars($l['nama_acara']); ?></div>
                                 <div style="font-size:0.75rem; color:#666;">ID: #<?php echo $l['id']; ?></div>
+                                <?php if(!empty($terkait)): ?>
+                                    <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:4px;">
+                                        <?php foreach($terkait as $ns): ?>
+                                            <span style="background:rgba(243, 156, 18, 0.1); color:#f39c12; padding:3px 8px; border-radius:6px; font-size:0.7rem; font-weight:600; border:1px solid rgba(243, 156, 18, 0.3);" title="Terikat dengan surat ini">
+                                                <i class="fas fa-link"></i> <?php echo htmlspecialchars($ns); ?>
+                                            </span>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php else: ?>
+                                    <div style="margin-top:8px;">
+                                        <span style="background:rgba(46, 204, 113, 0.1); color:#2ecc71; padding:3px 8px; border-radius:6px; font-size:0.7rem; font-weight:600; border:1px solid rgba(46, 204, 113, 0.3);" title="Tidak terikat pada surat manapun">
+                                            <i class="fas fa-check"></i> Berdiri Sendiri
+                                        </span>
+                                    </div>
+                                <?php endif; ?>
                             </td>
                             <td style="padding: 15px;">
                                 <div style="color: #eee;"><?php echo htmlspecialchars($l['tanggal_kegiatan']); ?></div>
@@ -115,9 +167,27 @@ $list_lampiran = dbFetchAll("SELECT * FROM lampiran_pinjam WHERE periode_id = ? 
                             </td>
                             <td style="padding: 15px; text-align:center;">
                                 <div style="display:flex; gap:8px; justify-content:center;">
-                                    <button onclick="openEditModal(<?php echo htmlspecialchars(json_encode($l)); ?>)" style="width: 38px; height: 38px; border-radius: 10px; background: rgba(79, 172, 254, 0.1); color: #4facfe; border: none; cursor: pointer; transition: 0.3s;" title="Edit Info">
+                                    <form action="cetak-lampiran-pdf.php" method="POST" target="_blank" style="margin:0; padding:0;">
+                                        <input type="hidden" name="acara" value="<?php echo htmlspecialchars($l['nama_acara']); ?>">
+                                        <input type="hidden" name="tanggal" value="<?php echo htmlspecialchars($l['tanggal_kegiatan']); ?>">
+                                        <input type="hidden" name="tahun" value="<?php echo htmlspecialchars($l['tahun']); ?>">
+                                        <?php foreach($barang_data as $b): ?>
+                                            <input type="hidden" name="qty[<?php echo htmlspecialchars($b['id']); ?>]" value="<?php echo (int)$b['qty']; ?>">
+                                            <input type="hidden" name="item_name[<?php echo htmlspecialchars($b['id']); ?>]" value="<?php echo htmlspecialchars($b['nama']); ?>">
+                                        <?php endforeach; ?>
+                                        <button type="submit" style="width: 38px; height: 38px; border-radius: 10px; background: rgba(39, 174, 96, 0.1); color: #27ae60; border: none; cursor: pointer; transition: 0.3s; display: flex; align-items: center; justify-content: center;" title="Cetak Lampiran PDF" onmouseover="this.style.background='rgba(39, 174, 96, 0.2)'" onmouseout="this.style.background='rgba(39, 174, 96, 0.1)'">
+                                            <i class="fas fa-print"></i>
+                                        </button>
+                                    </form>
+                                    <a href="cetak-lampiran.php?edit_id=<?php echo $l['id']; ?>" style="width: 38px; height: 38px; border-radius: 10px; background: rgba(79, 172, 254, 0.1); color: #4facfe; border: none; cursor: pointer; transition: 0.3s; display: flex; align-items: center; justify-content: center; text-decoration: none;" title="Edit Info, Barang & Tempat">
                                         <i class="fas fa-edit"></i>
-                                    </button>
+                                    </a>
+                                    <a href="?duplicate=<?php echo $l['id']; ?>&csrf_token=<?php echo csrfToken(); ?>" 
+                                       style="width: 38px; height: 38px; border-radius: 10px; background: rgba(241, 196, 15, 0.1); color: #f1c40f; border: none; cursor: pointer; transition: 0.3s; display: flex; align-items: center; justify-content: center; text-decoration: none;"
+                                       onclick="return confirm('Duplikasi data lampiran ini?')" 
+                                       title="Duplikat">
+                                        <i class="fas fa-copy"></i>
+                                    </a>
                                     <a href="?delete=<?php echo $l['id']; ?>&csrf_token=<?php echo csrfToken(); ?>" 
                                        style="width: 38px; height: 38px; border-radius: 10px; background: rgba(231, 76, 60, 0.1); color: #e74c3c; border: none; cursor: pointer; transition: 0.3s; display: flex; align-items: center; justify-content: center; text-decoration: none;"
                                        onclick="return confirm('Hapus data lampiran ini dari arsip?')" 
@@ -135,60 +205,6 @@ $list_lampiran = dbFetchAll("SELECT * FROM lampiran_pinjam WHERE periode_id = ? 
     </div>
 </div>
 
-<!-- MODAL EDIT INFO -->
-<div id="editModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; backdrop-filter:blur(10px); align-items:center; justify-content:center;">
-    <div style="background: var(--card-bg); border: 1px solid var(--border-color); width:100%; max-width:500px; padding:30px; border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.5);">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-            <h2 style="margin:0; color: #fff;"><i class="fas fa-edit"></i> Edit Info Lampiran</h2>
-            <button onclick="closeModal()" style="background:none; border:none; color:#888; font-size:1.5rem; cursor:pointer;"><i class="fas fa-times"></i></button>
-        </div>
-        <form action="" method="POST">
-            <?php echo csrfField(); ?>
-            <input type="hidden" name="action" value="update">
-            <input type="hidden" name="id" id="edit-id">
-            
-            <div style="margin-bottom: 15px;">
-                <label style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9rem;">Nama Acara / Kegiatan</label>
-                <input type="text" name="nama_acara" id="edit-acara" required style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); padding: 12px; border-radius: 10px; color: #fff;">
-            </div>
-            
-            <div style="margin-bottom: 15px;">
-                <label style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9rem;">Tanggal Pelaksanaan</label>
-                <input type="text" name="tanggal_kegiatan" id="edit-tanggal" placeholder="Contoh: Senin, 12 Desember 2025" required style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); padding: 12px; border-radius: 10px; color: #fff;">
-            </div>
-            
-            <div style="margin-bottom: 15px;">
-                <label style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9rem;">Tahun</label>
-                <input type="text" name="tahun" id="edit-tahun" maxlength="4" required style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); padding: 12px; border-radius: 10px; color: #fff;">
-            </div>
-            
-            <div style="margin-top:25px; display:flex; gap:10px;">
-                <button type="submit" class="btn-primary" style="flex-grow:1; background: var(--primary-gradient); border: none; color: #fff; padding: 12px; border-radius: 12px; font-weight: 600; cursor: pointer;">Simpan Perubahan</button>
-                <button type="button" onclick="closeModal()" style="background: #333; color: #fff; border: none; padding: 12px 20px; border-radius: 12px; cursor: pointer;">Batal</button>
-            </div>
-        </form>
-    </div>
-</div>
 
-<script>
-function openEditModal(data) {
-    document.getElementById('edit-id').value = data.id;
-    document.getElementById('edit-acara').value = data.nama_acara;
-    document.getElementById('edit-tanggal').value = data.tanggal_kegiatan;
-    document.getElementById('edit-tahun').value = data.tahun;
-    document.getElementById('editModal').style.display = 'flex';
-}
-
-function closeModal() {
-    document.getElementById('editModal').style.display = 'none';
-}
-
-// Close on outside click
-window.onclick = function(event) {
-    if (event.target == document.getElementById('editModal')) {
-        closeModal();
-    }
-}
-</script>
 
 <?php require_once __DIR__ . '/footer.php'; ?>

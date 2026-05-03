@@ -5,6 +5,21 @@ require_once __DIR__ . '/header.php';
 requireSekretaris();
 $periode_id = getUserPeriode();
 
+// --- INITIALIZE EDIT MODE ---
+$edit_id = isset($_GET['edit_id']) ? (int)$_GET['edit_id'] : 0;
+$edit_data = null;
+$pre_filled_qty = [];
+
+if ($edit_id > 0) {
+    $edit_data = dbFetchOne("SELECT * FROM lampiran_pinjam WHERE id = ? AND periode_id = ?", [$edit_id, $periode_id], "ii");
+    if ($edit_data) {
+        $barang_data = json_decode($edit_data['barang_json'], true) ?: [];
+        foreach ($barang_data as $b) {
+            $pre_filled_qty[$b['id']] = $b['qty'];
+        }
+    }
+}
+
 // --- POST HANDLER: SIMPAN DATA PEMINJAMAN ---
 $success_msg = '';
 $error_msg = '';
@@ -14,6 +29,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $tanggal = trim($_POST['tanggal'] ?? '');
     $tahun   = trim($_POST['tahun'] ?? '');
     $qtys    = $_POST['qty'] ?? [];
+    $target_edit_id = isset($_POST['edit_id']) ? (int)$_POST['edit_id'] : 0;
     
     // Filter barang yang jumlahnya > 0
     $items_to_save = [];
@@ -33,13 +49,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $error_msg = "Minimal pilih 1 barang untuk disimpan.";
     } else {
         $barang_json = json_encode($items_to_save);
-        $res = dbQuery("INSERT INTO lampiran_pinjam (nama_acara, tanggal_kegiatan, tahun, barang_json, periode_id) VALUES (?, ?, ?, ?, ?)", [
-            $acara, $tanggal, $tahun, $barang_json, $periode_id
-        ]);
-        if ($res) {
-            $success_msg = "Data peminjaman berhasil disimpan ke arsip.";
+        
+        if ($target_edit_id > 0) {
+            // Update existing data
+            $res = dbQuery("UPDATE lampiran_pinjam SET nama_acara = ?, tanggal_kegiatan = ?, tahun = ?, barang_json = ? WHERE id = ? AND periode_id = ?", [
+                $acara, $tanggal, $tahun, $barang_json, $target_edit_id, $periode_id
+            ]);
+            if ($res) {
+                $success_msg = "Data peminjaman berhasil diperbarui.";
+                // Refresh edit data after update
+                $edit_id = $target_edit_id;
+                $edit_data = dbFetchOne("SELECT * FROM lampiran_pinjam WHERE id = ? AND periode_id = ?", [$edit_id, $periode_id], "ii");
+                $pre_filled_qty = [];
+                if ($edit_data) {
+                    $barang_data = json_decode($edit_data['barang_json'], true) ?: [];
+                    foreach ($barang_data as $b) {
+                        $pre_filled_qty[$b['id']] = $b['qty'];
+                    }
+                }
+            } else {
+                $error_msg = "Gagal memperbarui data ke database.";
+            }
         } else {
-            $error_msg = "Gagal menyimpan data ke database.";
+            // Insert new data
+            $res = dbQuery("INSERT INTO lampiran_pinjam (nama_acara, tanggal_kegiatan, tahun, barang_json, periode_id) VALUES (?, ?, ?, ?, ?)", [
+                $acara, $tanggal, $tahun, $barang_json, $periode_id
+            ]);
+            if ($res) {
+                $success_msg = "Data peminjaman berhasil disimpan ke arsip.";
+            } else {
+                $error_msg = "Gagal menyimpan data ke database.";
+            }
         }
     }
 }
@@ -311,7 +351,7 @@ $tempat = dbFetchAll("SELECT id, nama_tempat as nama, '' as satuan, 'tempat' as 
         <div class="card">
             <div class="card-header">
                 <i class="fas fa-list-check fa-2x"></i>
-                <h2>Form Cetak & Simpan Lampiran</h2>
+                <h2><?php echo $edit_data ? 'Edit Data Lampiran' : 'Form Cetak & Simpan Lampiran'; ?></h2>
             </div>
 
             <?php if ($success_msg): ?>
@@ -339,10 +379,10 @@ $tempat = dbFetchAll("SELECT id, nama_tempat as nama, '' as satuan, 'tempat' as 
                         </div>
                         <span style="color:#777; font-size:0.9rem; margin-left: 5px;">Hari</span>
                     </div>
-                    <div class="preview-bar" id="preview-tanggal">Pilih tanggal di atas...</div>
+                    <div class="preview-bar" id="preview-tanggal"><?php echo $edit_data ? htmlspecialchars($edit_data['tanggal_kegiatan']) : 'Pilih tanggal di atas...'; ?></div>
                     <!-- Input hidden untuk dikirim ke PHP -->
-                    <input type="hidden" name="tanggal" id="out-tanggal" required>
-                    <input type="hidden" name="tahun" id="out-tahun" value="<?php echo date('Y'); ?>">
+                    <input type="hidden" name="tanggal" id="out-tanggal" value="<?php echo $edit_data ? htmlspecialchars($edit_data['tanggal_kegiatan']) : ''; ?>" required>
+                    <input type="hidden" name="tahun" id="out-tahun" value="<?php echo $edit_data ? htmlspecialchars($edit_data['tahun']) : date('Y'); ?>">
                 </div>
 
                 <!-- Template Picker Acara -->
@@ -350,7 +390,7 @@ $tempat = dbFetchAll("SELECT id, nama_tempat as nama, '' as satuan, 'tempat' as 
                     <label>Nama Acara / Kegiatan</label>
                     <div class="tpl-picker" id="picker-acara">
                         <i class="fas fa-search tpl-search-icon"></i>
-                        <input type="text" id="input_acara" name="acara" class="tpl-search-input" placeholder="Cari atau ketik nama acara..." required onfocus="showTplResults()" onkeyup="filterTpl()">
+                        <input type="text" id="input_acara" name="acara" class="tpl-search-input" placeholder="Cari atau ketik nama acara..." value="<?php echo $edit_data ? htmlspecialchars($edit_data['nama_acara']) : ''; ?>" required onfocus="showTplResults()" onkeyup="filterTpl()">
                         <div class="tpl-results" id="results-acara">
                             <?php foreach($list_kegiatan as $k): ?>
                             <div class="tpl-item" onclick="selectTpl('<?php echo htmlspecialchars(addslashes($k['label'])); ?>')">
@@ -400,7 +440,7 @@ $tempat = dbFetchAll("SELECT id, nama_tempat as nama, '' as satuan, 'tempat' as 
                                         <!-- Class qty-input digunakan oleh JS untuk validasi 'total > 0' -->
                                         <div class="qty-wrapper">
                                             <button type="button" class="qty-btn" onclick="const i=this.nextElementSibling; if(i.value>0) i.stepDown();">-</button>
-                                            <input type="number" name="qty[<?php echo $uid; ?>]" class="qty-input barang-qty" min="0" value="0" onfocus="this.select()">
+                                            <input type="number" name="qty[<?php echo $uid; ?>]" class="qty-input barang-qty" min="0" value="<?php echo (int)($pre_filled_qty[$uid] ?? 0); ?>" onfocus="this.select()">
                                             <button type="button" class="qty-btn" onclick="this.previousElementSibling.stepUp();">+</button>
                                         </div>
                                         <span style="font-size: 0.85rem; color: #aaa; min-width: 40px; text-align: left;"><?php echo htmlspecialchars($item['satuan'] ?? 'pcs'); ?></span>
@@ -441,7 +481,7 @@ $tempat = dbFetchAll("SELECT id, nama_tempat as nama, '' as satuan, 'tempat' as 
                             </div>
                             <label class="switch" style="margin:0;" onclick="event.stopPropagation();">
                                 <!-- Kita gunakan checkbox, dan JS akan map nilainya ke 1 atau 0 -->
-                                <input type="checkbox" name="qty[<?php echo $uid; ?>]" value="1" class="qty-input tempat-toggle">
+                                <input type="checkbox" name="qty[<?php echo $uid; ?>]" value="1" class="qty-input tempat-toggle" <?php echo isset($pre_filled_qty[$uid]) && $pre_filled_qty[$uid] > 0 ? 'checked' : ''; ?>>
                                 <span class="slider"></span>
                             </label>
                             <input type="hidden" name="item_name[<?php echo $uid; ?>]" value="<?php echo htmlspecialchars($item['nama']); ?>">
@@ -452,12 +492,18 @@ $tempat = dbFetchAll("SELECT id, nama_tempat as nama, '' as satuan, 'tempat' as 
         </div>
 
         <div class="actions-bar">
-            <button type="button" class="btn-reset" onclick="resetAll()">
-                <i class="fas fa-undo"></i> Reset Semua Jumlah
-            </button>
+            <?php if ($edit_data): ?>
+                <a href="arsip-lampiran.php" class="btn-reset" style="text-decoration:none; display:flex; align-items:center; gap:8px;">
+                    <i class="fas fa-arrow-left"></i> Kembali ke Arsip
+                </a>
+            <?php else: ?>
+                <button type="button" class="btn-reset" onclick="resetAll()">
+                    <i class="fas fa-undo"></i> Reset Semua Jumlah
+                </button>
+            <?php endif; ?>
             <div style="display: flex; gap: 12px;">
                 <button type="button" class="btn-print" style="background: var(--card-bg); border: 1px solid var(--border-color); color: #eee; box-shadow: none;" onclick="submitAction('save')">
-                    <i class="fas fa-save"></i> Simpan ke Arsip
+                    <i class="fas fa-save"></i> <?php echo $edit_data ? 'Update Arsip' : 'Simpan ke Arsip'; ?>
                 </button>
                 <button type="button" class="btn-print" onclick="submitAction('print')">
                     <i class="fas fa-file-pdf"></i> Cetak Lampiran PDF
@@ -466,6 +512,9 @@ $tempat = dbFetchAll("SELECT id, nama_tempat as nama, '' as satuan, 'tempat' as 
         </div>
         
         <input type="hidden" name="action" id="form-action" value="print">
+        <?php if ($edit_data): ?>
+            <input type="hidden" name="edit_id" value="<?php echo $edit_id; ?>">
+        <?php endif; ?>
     </form>
 </div>
 

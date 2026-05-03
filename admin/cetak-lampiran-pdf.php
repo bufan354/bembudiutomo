@@ -20,19 +20,54 @@ $tahun   = (int)($_POST['tahun'] ?? date('Y'));
 $qtys    = $_POST['qty'] ?? [];
 $item_names = $_POST['item_name'] ?? [];
 
-// Filter hanya barang yang jumlahnya > 0
-$selected_items = [];
+// Filter dan pisahkan barang dan tempat
+$list_barang = [];
+$list_tempat = [];
+
 foreach ($qtys as $id => $qty) {
     if ((int)$qty > 0) {
-        $selected_items[] = [
-            'nama' => $item_names[$id] ?? 'Barang tidak dikenal',
-            'qty'  => (int)$qty
-        ];
+        $nama_asli = $item_names[$id] ?? 'Tidak dikenal';
+        
+        if (strpos($id, 'b_') === 0) {
+            // Ini adalah barang
+            $satuan = 'pcs';
+            $nama = $nama_asli;
+            
+            // Ekstrak satuan yang berada di dalam kurung di akhir nama
+            if (preg_match('/(.*)\s+\(([^)]+)\)$/', $nama_asli, $matches)) {
+                $nama = trim($matches[1]);
+                $satuan = trim($matches[2]);
+            }
+            
+            $list_barang[] = [
+                'nama' => $nama,
+                'qty'  => (int)$qty,
+                'satuan' => $satuan
+            ];
+        } else if (strpos($id, 't_') === 0) {
+            // Ini adalah tempat
+            $list_tempat[] = [
+                'nama' => $nama_asli
+            ];
+        } else {
+            // Fallback
+            $satuan = 'pcs';
+            $nama = $nama_asli;
+            if (preg_match('/(.*)\s+\(([^)]+)\)$/', $nama_asli, $matches)) {
+                $nama = trim($matches[1]);
+                $satuan = trim($matches[2]);
+            }
+            $list_barang[] = [
+                'nama' => $nama,
+                'qty'  => (int)$qty,
+                'satuan' => $satuan
+            ];
+        }
     }
 }
 
-if (empty($selected_items)) {
-    die("Tidak ada barang yang dipilih untuk dicetak.");
+if (empty($list_barang) && empty($list_tempat)) {
+    die("Tidak ada barang atau tempat yang dipilih untuk dicetak.");
 }
 
 $download_name = "LAMPIRAN PINJAM BARANG - $acara - $tahun";
@@ -155,24 +190,51 @@ $download_name = "LAMPIRAN PINJAM BARANG - $acara - $tahun";
             <h2 style="font-size: 14pt; font-weight: bold; text-transform: uppercase;">Pada Tanggal <?php echo htmlspecialchars($tanggal); ?> Untuk Acara <?php echo htmlspecialchars($acara); ?> <?php echo $tahun; ?></h2>
         </div>
 
-        <table class="table-items">
-            <thead>
-                <tr>
-                    <th style="width: 50px;">No.</th>
-                    <th>Nama Barang / Tempat</th>
-                    <th style="width: 150px;">Jumlah</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ($selected_items as $idx => $item): ?>
+        <?php if (!empty($list_barang)): ?>
+        <div style="page-break-inside: avoid;">
+            <h3 style="margin-bottom:10px; font-size:12pt; text-transform:uppercase;">Daftar Barang</h3>
+            <table class="table-items">
+                <thead>
                     <tr>
-                        <td class="center"><?php echo $idx + 1; ?>.</td>
-                        <td><?php echo htmlspecialchars($item['nama']); ?></td>
-                        <td class="center"><?php echo $item['qty']; ?></td>
+                        <th style="width: 50px;">No.</th>
+                        <th>Nama Barang</th>
+                        <th style="width: 150px;">Jumlah</th>
                     </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    <?php foreach ($list_barang as $idx => $item): ?>
+                        <tr>
+                            <td class="center"><?php echo $idx + 1; ?>.</td>
+                            <td><?php echo htmlspecialchars($item['nama']); ?></td>
+                            <td class="center"><?php echo $item['qty'] . ' (' . htmlspecialchars($item['satuan']) . ')'; ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php endif; ?>
+
+        <?php if (!empty($list_tempat)): ?>
+        <div style="page-break-inside: avoid;">
+            <h3 style="margin-bottom:10px; font-size:12pt; text-transform:uppercase; margin-top:40px;">Daftar Tempat</h3>
+            <table class="table-items">
+                <thead>
+                    <tr>
+                        <th style="width: 50px;">No.</th>
+                        <th>Nama Tempat</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($list_tempat as $idx => $item): ?>
+                        <tr>
+                            <td class="center"><?php echo $idx + 1; ?>.</td>
+                            <td><?php echo htmlspecialchars($item['nama']); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php endif; ?>
 
         <div class="footer-pdf">
             Dicetak pada: <?php echo formatTanggal(date('Y-m-d H:i:s'), true); ?>

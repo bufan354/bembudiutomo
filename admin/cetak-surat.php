@@ -214,8 +214,6 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                 overflow: hidden;
             }
             * { 
-                border: none !important; 
-                border-color: transparent !important; 
                 box-shadow: none !important; 
                 outline: none !important; 
             }
@@ -224,9 +222,12 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                 border: 0 !important; 
                 outline: none !important; 
             }
-            table, tr, td { 
-                border: none !important; 
-                border-collapse: collapse !important; 
+            table {
+                border-collapse: collapse;
+            }
+            .lampiran-table, .lampiran-table th, .lampiran-table td {
+                border: 1px solid #000 !important;
+                border-color: #000 !important;
             }
             .pdf-page-canvas { border: none !important; }
             .page:last-of-type {
@@ -531,24 +532,82 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                 <h2 style="font-size: 14pt; font-weight: bold; text-transform: uppercase;">Pada Tanggal <?php echo htmlspecialchars($data_int['tanggal_kegiatan']); ?> Untuk Acara <?php echo htmlspecialchars($data_int['nama_acara']); ?> <?php echo htmlspecialchars($data_int['tahun']); ?></h2>
             </div>
 
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
-                <thead>
-                    <tr style="background: #f5f5f5;">
-                        <th style="border: 1px solid #000; padding: 10px; text-align: center; width: 50px;">No</th>
-                        <th style="border: 1px solid #000; padding: 10px; text-align: left;">Nama Barang / Tempat</th>
-                        <th style="border: 1px solid #000; padding: 10px; text-align: center; width: 100px;">Jumlah</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach($barang_list as $b_idx => $b): ?>
-                    <tr>
-                        <td style="border: 1px solid #000; padding: 8px; text-align: center;"><?php echo $b_idx + 1; ?></td>
-                        <td style="border: 1px solid #000; padding: 8px;"><?php echo htmlspecialchars($b['nama']); ?></td>
-                        <td style="border: 1px solid #000; padding: 8px; text-align: center;"><?php echo htmlspecialchars($b['qty']); ?></td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
+            <?php 
+                $list_barang = [];
+                $list_tempat = [];
+                foreach($barang_list as $b) {
+                    $id = $b['id'] ?? '';
+                    $qty = $b['qty'] ?? 0;
+                    $nama_asli = $b['nama'] ?? 'Tidak dikenal';
+                    
+                    if (strpos($id, 'b_') === 0) {
+                        $satuan = 'pcs';
+                        $nama = $nama_asli;
+                        if (preg_match('/(.*)\s+\(([^)]+)\)$/', $nama_asli, $matches)) {
+                            $nama = trim($matches[1]);
+                            $satuan = trim($matches[2]);
+                        }
+                        $list_barang[] = ['nama' => $nama, 'qty' => $qty, 'satuan' => $satuan];
+                    } else if (strpos($id, 't_') === 0) {
+                        $list_tempat[] = ['nama' => $nama_asli];
+                    } else {
+                        // fallback
+                        $satuan = 'pcs';
+                        $nama = $nama_asli;
+                        if (preg_match('/(.*)\s+\(([^)]+)\)$/', $nama_asli, $matches)) {
+                            $nama = trim($matches[1]);
+                            $satuan = trim($matches[2]);
+                        }
+                        $list_barang[] = ['nama' => $nama, 'qty' => $qty, 'satuan' => $satuan];
+                    }
+                }
+            ?>
+            
+            <?php if (!empty($list_barang)): ?>
+            <div style="page-break-inside: avoid;">
+                <h3 style="margin-bottom:10px; font-size:12pt; text-transform:uppercase;">Daftar Barang</h3>
+                <table class="lampiran-table" style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+                    <thead>
+                        <tr style="background: #f5f5f5;">
+                            <th style="border: 1px solid #000; padding: 8px; text-align: center; width: 50px;">No.</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: left;">Nama Barang</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: center; width: 100px;">Jumlah</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($list_barang as $b_idx => $item): ?>
+                        <tr>
+                            <td style="border: 1px solid #000; padding: 8px; text-align: center;"><?php echo $b_idx + 1; ?>.</td>
+                            <td style="border: 1px solid #000; padding: 8px;"><?php echo htmlspecialchars($item['nama']); ?></td>
+                            <td style="border: 1px solid #000; padding: 8px; text-align: center;"><?php echo $item['qty'] . ' (' . htmlspecialchars($item['satuan']) . ')'; ?></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
+
+            <?php if (!empty($list_tempat)): ?>
+            <div style="page-break-inside: avoid;">
+                <h3 style="margin-bottom:10px; font-size:12pt; text-transform:uppercase; margin-top:40px;">Daftar Tempat</h3>
+                <table class="lampiran-table" style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+                    <thead>
+                        <tr style="background: #f5f5f5;">
+                            <th style="border: 1px solid #000; padding: 8px; text-align: center; width: 50px;">No.</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: left;">Nama Tempat</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($list_tempat as $b_idx => $item): ?>
+                        <tr>
+                            <td style="border: 1px solid #000; padding: 8px; text-align: center;"><?php echo $b_idx + 1; ?>.</td>
+                            <td style="border: 1px solid #000; padding: 8px;"><?php echo htmlspecialchars($item['nama']); ?></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
             
             <p style="font-size: 11pt; margin-top: 20px;">Demikian daftar barang ini kami buat untuk dapat dipergunakan sebagaimana mestinya.</p>
         </div>
