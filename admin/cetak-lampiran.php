@@ -568,8 +568,13 @@ function formatTanggalRange() {
 
 function resetAll() {
     if (confirm('Kosongkan semua pilihan dan jumlah input?')) {
-        document.querySelectorAll('.barang-qty').forEach(input => input.value = 0);
-        document.querySelectorAll('.tempat-toggle').forEach(input => input.checked = false);
+        document.querySelectorAll('.qty-input').forEach(input => {
+            if (input.type === 'checkbox') {
+                input.checked = false;
+            } else {
+                input.value = 0;
+            }
+        });
     }
 }
 
