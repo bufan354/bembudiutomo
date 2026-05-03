@@ -121,13 +121,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $konten_data = [
             'sapaan_tujuan'           => sanitizeText($_POST['sapaan_tujuan'] ?? '', 50),
-            'nama_kegiatan'           => sanitizeText($_POST['nama_kegiatan'] ?? '', 100),
-            'tema'                    => sanitizeText($_POST['tema'] ?? '', 255),
+            'nama_kegiatan'           => strip_tags(trim($_POST['nama_kegiatan'] ?? ''), '<b><strong><i><em><span>'),
+            'tema'                    => strip_tags(trim($_POST['tema'] ?? ''), '<b><strong><i><em><span>'),
             'tema_kegiatan'           => strip_tags(trim($_POST['tema_kegiatan'] ?? '')),
             'pelaksanaan_hari_tanggal'=> sanitizeText($_POST['pelaksanaan_hari_tanggal'], 100),
             'pelaksanaan_waktu'       => sanitizeText($_POST['pelaksanaan_waktu'], 100),
             'pelaksanaan_tempat'      => sanitizeText($_POST['pelaksanaan_tempat'], 100),
-            'konteks'                 => sanitizeText($_POST['konteks'] ?? '', 255),
+            'konteks'                 => strip_tags(trim($_POST['konteks'] ?? ''), '<b><strong><i><em><span>'),
+            'label_panitia'           => strtoupper(sanitizeText($_POST['label_panitia'] ?? '', 200)),
             'panitia_ketua'           => strtoupper(sanitizeText($_POST['panitia_ketua'], 100)),
             'panitia_ketua_ttd'       => saveSignatureToFile($_POST['panitia_ketua_ttd'] ?? '', 'ketua'),
             'panitia_sekretaris'      => strtoupper(sanitizeText($_POST['panitia_sekretaris'], 100)),
@@ -541,6 +542,18 @@ if ($is_edit || $is_clone) {
 }
 .buat-surat-container .preview-bar { background: rgba(74,144,226,0.08); border-radius: 12px; padding: 12px 16px; font-size: 0.85rem; margin-top: 15px; color: #8BB9F0; border-left: 4px solid var(--accent-color); }
 
+/* Mini RTE Editor */
+.rte-mini-wrap { border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; transition: border-color 0.2s; }
+.rte-mini-wrap:focus-within { border-color: var(--accent-color); box-shadow: 0 0 8px rgba(74,144,226,0.15); }
+.rte-mini-toolbar { display: flex; gap: 4px; padding: 6px 10px; background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border-color); }
+.rte-mini-btn { width: 32px; height: 28px; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: #aaa; cursor: pointer; font-size: 0.85rem; transition: all 0.15s; }
+.rte-mini-btn:hover { background: rgba(74,144,226,0.15); color: #4A90E2; border-color: rgba(74,144,226,0.3); }
+.rte-mini-btn:active, .rte-mini-btn.active { background: rgba(74,144,226,0.2); color: #4A90E2; border-color: #4A90E2; }
+.rte-mini-editor { min-height: 42px; padding: 10px 14px; color: #fff; font-size: 0.95rem; line-height: 1.5; outline: none; font-weight: bold; }
+.rte-mini-editor:empty::before { content: attr(data-placeholder); color: #555; pointer-events: none; font-weight: normal; }
+.rte-mini-editor b, .rte-mini-editor strong { color: #fff; }
+.rte-mini-editor i, .rte-mini-editor em { color: #ddd; }
+
 /* Drum Picker Refinement (Wheel Effect) */
 .drum-col { width: 58px; height: 168px; background: #080808; border-radius: 12px; overflow: hidden; position: relative; cursor: ns-resize; border: 1px solid #222; }
 .drum-inner { position: absolute; top: 0; left: 0; width: 100%; transition: transform 0.2s cubic-bezier(0.1, 0.7, 1.0, 0.1); will-change: transform; padding: 4px 0; }
@@ -758,10 +771,32 @@ if ($is_edit || $is_clone) {
                 
                 <div id="blok-template" style="<?php echo $mode_custom_default ? 'display:none' : ''; ?>">
                     <div class="grid-2">
-                        <div class="form-group"><label>Nama Kegiatan</label><input type="text" id="input_nama_kegiatan" name="nama_kegiatan" placeholder="Cth: LDKM 2026" value="<?php echo htmlspecialchars($edit_data['nama_kegiatan'] ?? ''); ?>"></div>
-                        <div class="form-group"><label>Tema Kegiatan</label><input type="text" id="input_tema" name="tema" placeholder="Cth: Bersinergi Membangun Bangsa" value="<?php echo htmlspecialchars($edit_data['tema'] ?? ''); ?>"></div>
+                        <div class="form-group">
+                            <label>Nama Kegiatan</label>
+                            <div class="rte-mini-wrap">
+                                <div class="rte-mini-toolbar">
+                                    <button type="button" onclick="execMiniRTE('rte_nama_keg','bold')" class="rte-mini-btn" title="Bold"><b>B</b></button>
+                                    <button type="button" onclick="execMiniRTE('rte_nama_keg','italic')" class="rte-mini-btn" title="Italic"><i>I</i></button>
+                                    <button type="button" onclick="execMiniRTE('rte_nama_keg','unbold')" class="rte-mini-btn" title="Unbold Text (Normal)" style="font-weight:normal;">A</button>
+                                </div>
+                                <div id="rte_nama_keg" class="rte-mini-editor" contenteditable="true" data-placeholder="Cth: LDKM 2026" oninput="syncMiniRTE('rte_nama_keg','input_nama_kegiatan')"><?php echo $edit_data['nama_kegiatan'] ?? ''; ?></div>
+                                <input type="hidden" id="input_nama_kegiatan" name="nama_kegiatan" value="<?php echo htmlspecialchars($edit_data['nama_kegiatan'] ?? ''); ?>">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Tema Kegiatan</label>
+                            <div class="rte-mini-wrap">
+                                <div class="rte-mini-toolbar">
+                                    <button type="button" onclick="execMiniRTE('rte_tema','bold')" class="rte-mini-btn" title="Bold"><b>B</b></button>
+                                    <button type="button" onclick="execMiniRTE('rte_tema','italic')" class="rte-mini-btn" title="Italic"><i>I</i></button>
+                                    <button type="button" onclick="execMiniRTE('rte_tema','unbold')" class="rte-mini-btn" title="Unbold Text (Normal)" style="font-weight:normal;">A</button>
+                                </div>
+                                <div id="rte_tema" class="rte-mini-editor" contenteditable="true" data-placeholder="Cth: Bersinergi Membangun Bangsa" oninput="syncMiniRTE('rte_tema','input_tema')"><?php echo $edit_data['tema'] ?? ''; ?></div>
+                                <input type="hidden" id="input_tema" name="tema" value="<?php echo htmlspecialchars($edit_data['tema'] ?? ''); ?>">
+                            </div>
+                        </div>
                     </div>
-                    <div class="preview-bar"><i class="fas fa-magic"></i> Sehubungan akan diadakannya kegiatan <strong>[Nama Kegiatan]</strong> dengan tema "<strong>[Tema]</strong>" yang akan dilaksanakan pada :</div>
+                    <div class="preview-bar" id="preview-paragraf"><i class="fas fa-magic"></i> <span id="preview-paragraf-text">Sehubungan akan diadakannya kegiatan <strong>[Nama Kegiatan]</strong> dengan tema "<strong>[Tema]</strong>" yang akan dilaksanakan pada :</span></div>
                 </div>
                 
                 <div id="blok-custom" style="<?php echo $mode_custom_default ? '' : 'display:none'; ?>">
@@ -867,7 +902,18 @@ if ($is_edit || $is_clone) {
                             </div>
                         </div>
                     </div>
-                    <div class="form-group"><label>Konteks Tambahan (Kalimat Akhir)</label><input type="text" name="konteks" placeholder="Cth: sebagai perwakilan delegasi" value="<?php echo htmlspecialchars($edit_data['konteks'] ?? ''); ?>"></div>
+                    <div class="form-group">
+                        <label>Konteks Tambahan (Kalimat Akhir)</label>
+                        <div class="rte-mini-wrap">
+                            <div class="rte-mini-toolbar">
+                                <button type="button" onclick="execMiniRTE('rte_konteks','bold')" class="rte-mini-btn" title="Bold"><b>B</b></button>
+                                <button type="button" onclick="execMiniRTE('rte_konteks','italic')" class="rte-mini-btn" title="Italic"><i>I</i></button>
+                                <button type="button" onclick="execMiniRTE('rte_konteks','unbold')" class="rte-mini-btn" title="Unbold Text (Normal)" style="font-weight:normal;">A</button>
+                            </div>
+                            <div id="rte_konteks" class="rte-mini-editor" style="font-weight: normal;" contenteditable="true" data-placeholder="Cth: untuk mendukung terselenggaranya kegiatan tersebut dari mulai Technical Meet" oninput="syncMiniRTE('rte_konteks','input_konteks')"><?php echo $edit_data['konteks'] ?? ''; ?></div>
+                            <input type="hidden" id="input_konteks" name="konteks" value="<?php echo htmlspecialchars($edit_data['konteks'] ?? ''); ?>">
+                        </div>
+                    </div>
                 </div>
                 <div class="form-group"><label>Tembusan (Opsional)</label><textarea name="tembusan" rows="2" placeholder="1. Arsip..."><?php echo htmlspecialchars($edit_data['tembusan'] ?? ''); ?></textarea></div>
             </div>
@@ -934,6 +980,11 @@ if ($is_edit || $is_clone) {
         <div class="card">
             <div class="card-header"><i class="fas fa-pen-nib"></i> Penanggung Jawab / Panitia</div>
             <div class="card-body">
+                <div class="form-group" style="margin-bottom:24px;">
+                    <label>Label Panitia (Opsional)</label>
+                    <input type="text" name="label_panitia" placeholder="Kosongkan untuk default dari Nama Kegiatan" value="<?php echo htmlspecialchars($edit_data['label_panitia'] ?? ''); ?>" style="text-transform: uppercase;">
+                    <small style="color: #666; display:block; margin-top:6px;"><i class="fas fa-info-circle"></i> Akan tampil sebagai: PANITIA PELAKSANA <strong>[isian ini]</strong> 2026. Kosongkan jika ingin otomatis.</small>
+                </div>
                 <div class="grid-2">
                     <div class="form-group">
                         <label>Nama Ketua Pelaksana</label>
@@ -1168,6 +1219,59 @@ function toggleModeParagraf() {
         btn.innerText = 'Ganti ke Mode Custom';
     }
 }
+
+// ========== Mini RTE Mode Template ==========
+function execMiniRTE(id, cmd) {
+    let el = document.getElementById(id);
+    el.focus();
+    if (cmd === 'unbold') {
+        let sel = window.getSelection();
+        if (sel.rangeCount > 0 && !sel.isCollapsed) {
+            let range = sel.getRangeAt(0);
+            let span = document.createElement('span');
+            span.style.fontWeight = 'normal';
+            span.appendChild(range.extractContents());
+            range.insertNode(span);
+            // Clear selection
+            sel.removeAllRanges();
+        }
+    } else {
+        document.execCommand(cmd, false, null);
+    }
+    syncMiniRTE(id, id.replace('rte_', 'input_'));
+}
+
+function syncMiniRTE(id, targetId) {
+    let el = document.getElementById(id);
+    let html = el.innerHTML;
+    if (el.innerText.trim() === '') html = ''; // Clear if empty
+    document.getElementById(targetId).value = html;
+    updatePreviewParagraf();
+}
+
+function updatePreviewParagraf() {
+    let nama = document.getElementById('input_nama_kegiatan').value.trim();
+    let tema = document.getElementById('input_tema').value.trim();
+    
+    let isNamaEmpty = (nama === '' || nama === '<br>');
+    let isTemaEmpty = (tema === '' || tema === '<br>');
+
+    let displayNama = isNamaEmpty ? '[Nama Kegiatan]' : nama;
+    let displayTema = isTemaEmpty ? '[Tema]' : tema;
+
+    // Wrap in <b> to represent the bold default
+    let html = 'Sehubungan akan diadakannya kegiatan <b>' + displayNama + '</b>' +
+               (isTemaEmpty ? ' dengan tema "<b>' + displayTema + '</b>"' : ' dengan tema "<b>' + displayTema + '</b>"') +
+               ' yang akan dilaksanakan pada :';
+    
+    document.getElementById('preview-paragraf-text').innerHTML = html;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    if(document.getElementById('preview-paragraf-text')) {
+        updatePreviewParagraf();
+    }
+});
 
 function execRTE(cmd) {
     document.getElementById('rte-editor').focus();

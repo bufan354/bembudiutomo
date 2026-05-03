@@ -349,8 +349,8 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                 if (!empty($nama_keg)) {
                     // Mode template: generate dari nama_kegiatan + tema
                     $pembuka = 'Sehubungan akan diadakannya kegiatan <b>'
-                        . htmlspecialchars($nama_keg) . '</b> Tahun ' . htmlspecialchars($tahun_surat)
-                        . (!empty($tema_keg) ? ' dengan tema "<b>' . htmlspecialchars($tema_keg) . '</b>"' : '')
+                        . $nama_keg . '</b> Tahun ' . htmlspecialchars($tahun_surat)
+                        . (!empty($tema_keg) ? ' dengan tema "<b>' . $tema_keg . '</b>"' : '')
                         . ' yang akan dilaksanakan pada :';
                 } elseif (!empty($custom)) {
                     // Mode custom
@@ -406,15 +406,32 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                 }
             }
 
-            $sapaan = !empty($konten['sapaan_tujuan']) ? $konten['sapaan_tujuan'] . ' ' : '';
+            $sapaan = !empty($konten['sapaan_tujuan']) ? htmlspecialchars($konten['sapaan_tujuan']) . ' ' : '';
+            
+            // Hindari redundansi untuk berbagai jenis surat di paragraf pertama
+            $perihal_paragraf_1 = mb_strtolower($surat['perihal']);
+            if (strpos($perihal_paragraf_1, 'pemberitahuan') !== false) {
+                $perihal_paragraf_1 = 'pemberitahuan';
+            } elseif (strpos($perihal_paragraf_1, 'undangan') !== false) {
+                $perihal_paragraf_1 = 'undangan';
+            } elseif (strpos($perihal_paragraf_1, 'delegasi') !== false) {
+                $perihal_paragraf_1 = 'delegasi';
+            } elseif (strpos($perihal_paragraf_1, 'utusan') !== false) {
+                $perihal_paragraf_1 = 'utusan';
+            } elseif (strpos($perihal_paragraf_1, 'peminjaman') !== false) {
+                $perihal_paragraf_1 = 'permohonan peminjaman';
+            } elseif (strpos($perihal_paragraf_1, 'permohonan') !== false) {
+                $perihal_paragraf_1 = 'permohonan';
+            }
+
             $paragraf_permohonan  = 'Dengan ini kami menyampaikan '
-                . mb_strtolower($surat['perihal'])
+                . htmlspecialchars($perihal_paragraf_1)
                 . ' kepada '
                 . $sapaan
-                . $tujuan_baris_pertama
+                . htmlspecialchars($tujuan_baris_pertama)
                 . $suffix;
             ?>
-            <p class="indent"><?php echo htmlspecialchars($paragraf_permohonan); ?></p>
+            <p class="indent"><?php echo $paragraf_permohonan; ?></p>
             
             <?php
             // Paragraf Penutup: dinamis (mengikuti perihal)
@@ -431,7 +448,12 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
             $kode_keg = "";
             $parts = explode('/', $surat['nomor_surat']);
             if (isset($parts[2])) $kode_keg = $parts[2];
-            $nama_panitia = !empty($konten['nama_kegiatan']) ? $konten['nama_kegiatan'] : $kode_keg;
+            // Prioritas: label_panitia custom > nama_kegiatan > kode_kegiatan
+            if (!empty($konten['label_panitia'])) {
+                $nama_panitia = $konten['label_panitia']; // Sudah uppercase dari form
+            } else {
+                $nama_panitia = !empty($konten['nama_kegiatan']) ? $konten['nama_kegiatan'] : $kode_keg;
+            }
 
             // Helper untuk deteksi TTD (Base64 vs File)
             function renderTTD($val) {
