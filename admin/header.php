@@ -481,6 +481,31 @@ if (isset($page_css)) {
             </a>
             <?php endif; ?>
 
+            <?php if ($isSekretaris || $isSuperadmin): ?>
+            <div class="menu-divider"></div>
+            <div class="menu-label">Rundown Acara</div>
+            <a href="master-penanggung-jawab.php"
+               class="<?php echo $current_page === 'master-penanggung-jawab.php' ? 'active' : ''; ?>">
+                <i class="fas fa-user-tie"></i><span>Master PJ</span>
+            </a>
+            <a href="master-keterangan.php"
+               class="<?php echo $current_page === 'master-keterangan.php' ? 'active' : ''; ?>">
+                <i class="fas fa-list"></i><span>Master Keterangan</span>
+            </a>
+            <a href="master-tempat-kegiatan.php"
+               class="<?php echo $current_page === 'master-tempat-kegiatan.php' ? 'active' : ''; ?>">
+                <i class="fas fa-map-marked-alt"></i><span>Master Tempat Kegiatan</span>
+            </a>
+            <a href="cetak-rundown.php"
+               class="<?php echo $current_page === 'cetak-rundown.php' ? 'active' : ''; ?>">
+                <i class="fas fa-calendar-check"></i><span>Cetak Rundown</span>
+            </a>
+            <a href="arsip-rundown.php"
+               class="<?php echo $current_page === 'arsip-rundown.php' ? 'active' : ''; ?>">
+                <i class="fas fa-clipboard-list"></i><span>Arsip Rundown</span>
+            </a>
+            <?php endif; ?>
+
             <div class="menu-divider"></div>
             <div class="menu-label">Akun</div>
             <a href="pengaturan.php"

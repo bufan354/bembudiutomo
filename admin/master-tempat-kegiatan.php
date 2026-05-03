@@ -1,5 +1,5 @@
 <?php
-// admin/master-tempat.php
+// admin/master-tempat-kegiatan.php
 require_once __DIR__ . '/header.php';
 
 requireSekretaris();
@@ -17,14 +17,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'add') {
             $nama = sanitizeText($_POST['nama_tempat'] ?? '');
             if (empty($nama)) {
-                $error = 'Nama tempat tidak boleh kosong.';
+                $error = 'Tempat tidak boleh kosong.';
             } else {
                 try {
-                    dbQuery("INSERT INTO tempat_master (nama_tempat) VALUES (?)", [$nama], "s");
-                    $success = 'Tempat berhasil ditambahkan.';
-                    auditLog('ADD_TEMPAT', 'tempat_master', null, 'Menambah tempat: ' . $nama);
+                    dbQuery("INSERT INTO rundown_tempat (nama_tempat) VALUES (?)", [$nama], "s");
+                    $success = 'Tempat Kegiatan berhasil ditambahkan.';
+                    auditLog('ADD_TEMPAT_KEGIATAN', 'rundown_tempat', null, 'Menambah Tempat: ' . $nama);
                 } catch (Exception $e) {
-                    $error = 'Gagal menambah tempat: ' . $e->getMessage();
+                    $error = 'Gagal menambah tempat kegiatan: ' . $e->getMessage();
                 }
             }
         } elseif ($action === 'edit') {
@@ -34,11 +34,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error = 'Data tidak valid.';
             } else {
                 try {
-                    dbUpdate("UPDATE tempat_master SET nama_tempat = ? WHERE id = ?", [$nama, $id], "si");
-                    $success = 'Tempat berhasil diperbarui.';
-                    auditLog('EDIT_TEMPAT', 'tempat_master', $id, 'Update tempat ke: ' . $nama);
+                    dbUpdate("UPDATE rundown_tempat SET nama_tempat = ? WHERE id = ?", [$nama, $id], "si");
+                    $success = 'Tempat Kegiatan berhasil diperbarui.';
+                    auditLog('EDIT_TEMPAT_KEGIATAN', 'rundown_tempat', $id, 'Update Tempat Kegiatan ke: ' . $nama);
                 } catch (Exception $e) {
-                    $error = 'Gagal memperbarui tempat: ' . $e->getMessage();
+                    $error = 'Gagal memperbarui tempat kegiatan: ' . $e->getMessage();
                 }
             }
         } elseif ($action === 'delete') {
@@ -47,11 +47,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error = 'ID tidak valid.';
             } else {
                 try {
-                    dbQuery("DELETE FROM tempat_master WHERE id = ?", [$id], "i");
-                    $success = 'Tempat berhasil dihapus.';
-                    auditLog('DELETE_TEMPAT', 'tempat_master', $id, 'Menghapus tempat ID: ' . $id);
+                    dbQuery("DELETE FROM rundown_tempat WHERE id = ?", [$id], "i");
+                    $success = 'Tempat Kegiatan berhasil dihapus.';
+                    auditLog('DELETE_TEMPAT_KEGIATAN', 'rundown_tempat', $id, 'Menghapus Tempat Kegiatan ID: ' . $id);
                 } catch (Exception $e) {
-                    $error = 'Gagal menghapus tempat: ' . $e->getMessage();
+                    $error = 'Gagal menghapus tempat kegiatan: ' . $e->getMessage();
                 }
             }
         } elseif ($action === 'copy') {
@@ -61,13 +61,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 try {
                     // Cek apakah sudah ada
-                    $exists = dbFetchOne("SELECT id FROM tempat_master WHERE nama_tempat = ?", [$nama], "s");
+                    $exists = dbFetchOne("SELECT id FROM rundown_tempat WHERE nama_tempat = ?", [$nama], "s");
                     if ($exists) {
-                        $error = 'Tempat "' . $nama . '" sudah ada di daftar Master Inventaris Tempat.';
+                        $error = 'Tempat "' . $nama . '" sudah ada di daftar Master Tempat Kegiatan.';
                     } else {
-                        dbQuery("INSERT INTO tempat_master (nama_tempat) VALUES (?)", [$nama], "s");
-                        $success = 'Berhasil menyalin "' . $nama . '" ke Master Inventaris Tempat.';
-                        auditLog('COPY_TEMPAT', 'tempat_master', null, 'Menyalin Tempat: ' . $nama);
+                        dbQuery("INSERT INTO rundown_tempat (nama_tempat) VALUES (?)", [$nama], "s");
+                        $success = 'Berhasil menyalin "' . $nama . '" ke Master Tempat Kegiatan.';
+                        auditLog('COPY_TEMPAT_KEGIATAN', 'rundown_tempat', null, 'Menyalin Tempat: ' . $nama);
                     }
                 } catch (Exception $e) {
                     $error = 'Gagal menyalin tempat: ' . $e->getMessage();
@@ -75,18 +75,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         } elseif ($action === 'copy_all') {
             try {
-                $source_items = dbFetchAll("SELECT nama_tempat FROM rundown_tempat");
+                $source_items = dbFetchAll("SELECT nama_tempat FROM tempat_master");
                 $inserted = 0;
                 foreach ($source_items as $src) {
                     $nama = $src['nama_tempat'];
-                    $exists = dbFetchOne("SELECT id FROM tempat_master WHERE nama_tempat = ?", [$nama], "s");
+                    $exists = dbFetchOne("SELECT id FROM rundown_tempat WHERE nama_tempat = ?", [$nama], "s");
                     if (!$exists) {
-                        dbQuery("INSERT INTO tempat_master (nama_tempat) VALUES (?)", [$nama], "s");
+                        dbQuery("INSERT INTO rundown_tempat (nama_tempat) VALUES (?)", [$nama], "s");
                         $inserted++;
                     }
                 }
-                $success = "Berhasil menyalin $inserted data ke Master Inventaris Tempat.";
-                auditLog('COPY_ALL_TEMPAT', 'tempat_master', null, "Menyalin $inserted tempat dari Kegiatan");
+                $success = "Berhasil menyalin $inserted data ke Master Tempat Kegiatan.";
+                auditLog('COPY_ALL_TEMPAT_KEGIATAN', 'rundown_tempat', null, "Menyalin $inserted tempat dari Inventaris");
             } catch (Exception $e) {
                 $error = 'Gagal menyalin semua tempat: ' . $e->getMessage();
             }
@@ -95,8 +95,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // Fetch Items
-$items_peminjaman = dbFetchAll("SELECT * FROM tempat_master ORDER BY nama_tempat ASC");
 $items_kegiatan = dbFetchAll("SELECT * FROM rundown_tempat ORDER BY nama_tempat ASC");
+$items_peminjaman = dbFetchAll("SELECT * FROM tempat_master ORDER BY nama_tempat ASC");
 ?>
 
 <style>
@@ -330,10 +330,10 @@ $items_kegiatan = dbFetchAll("SELECT * FROM rundown_tempat ORDER BY nama_tempat 
     <?php endif; ?>
 
     <div style="display: grid; grid-template-columns: 1fr; gap: 24px;">
-        <!-- Card 1: Inventaris Tempat (Main) -->
+        <!-- Card 1: Tempat Kegiatan (Rundown) -->
         <div class="card">
             <div class="card-header">
-                <h2><i class="fas fa-map-marker-alt"></i> Master Inventaris Tempat</h2>
+                <h2><i class="fas fa-map-marked-alt"></i> Master Tempat Kegiatan</h2>
                 <button class="btn-premium" onclick="openModal('add')">
                     <i class="fas fa-plus"></i> Tambah Tempat
                 </button>
@@ -344,20 +344,20 @@ $items_kegiatan = dbFetchAll("SELECT * FROM rundown_tempat ORDER BY nama_tempat 
                     <thead>
                         <tr>
                             <th>No</th>
-                            <th>Nama Tempat</th>
+                            <th>Tempat Kegiatan</th>
                             <th>Aksi</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php if (empty($items_peminjaman)): ?>
+                        <?php if (empty($items_kegiatan)): ?>
                             <tr>
                                 <td colspan="3" style="text-align:center; color:#555; padding: 40px;">
-                                    <i class="fas fa-building" style="font-size:2rem; display:block; margin-bottom:10px;"></i>
-                                    Belum ada data tempat peminjaman.
+                                    <i class="fas fa-map-marker-slash" style="font-size:2rem; display:block; margin-bottom:10px;"></i>
+                                    Belum ada data tempat kegiatan.
                                 </td>
                             </tr>
                         <?php else: ?>
-                            <?php foreach ($items_peminjaman as $idx => $item): ?>
+                            <?php foreach ($items_kegiatan as $idx => $item): ?>
                                 <tr>
                                     <td><?php echo $idx + 1; ?></td>
                                     <td class="item-name"><?php echo htmlspecialchars($item['nama_tempat']); ?></td>
@@ -365,7 +365,7 @@ $items_kegiatan = dbFetchAll("SELECT * FROM rundown_tempat ORDER BY nama_tempat 
                                         <button class="btn-icon" onclick="openModal('edit', <?php echo $item['id']; ?>, '<?php echo htmlspecialchars(addslashes($item['nama_tempat'])); ?>')">
                                             <i class="fas fa-edit"></i>
                                         </button>
-                                        <form method="POST" style="display:inline;" onsubmit="return confirm('Hapus tempat peminjaman ini?')">
+                                        <form method="POST" style="display:inline;" onsubmit="return confirm('Hapus tempat ini?')">
                                             <?php echo csrfField(); ?>
                                             <input type="hidden" name="action" value="delete">
                                             <input type="hidden" name="id" value="<?php echo $item['id']; ?>">
@@ -382,11 +382,11 @@ $items_kegiatan = dbFetchAll("SELECT * FROM rundown_tempat ORDER BY nama_tempat 
             </div>
         </div>
 
-        <!-- Card 2: Sumber Data dari Tempat Kegiatan -->
+        <!-- Card 2: Sumber Data dari Inventaris Tempat -->
         <div class="card" style="border-top: 4px solid #f39c12; background: rgba(243, 156, 18, 0.02);">
             <div class="card-header">
-                <h2><i class="fas fa-map-marked-alt" style="color: #f39c12;"></i> Referensi: Master Tempat Kegiatan</h2>
-                <form method="POST" style="display:inline;" onsubmit="return confirm('Salin semua data kegiatan yang belum ada ke Inventaris?')">
+                <h2><i class="fas fa-building" style="color: #f39c12;"></i> Referensi: Master Inventaris Tempat</h2>
+                <form method="POST" style="display:inline;" onsubmit="return confirm('Salin semua data inventaris yang belum ada ke Tempat Kegiatan?')">
                     <?php echo csrfField(); ?>
                     <input type="hidden" name="action" value="copy_all">
                     <button type="submit" class="btn-outline" style="border-color: #f39c12; color: #f39c12;">
@@ -405,14 +405,14 @@ $items_kegiatan = dbFetchAll("SELECT * FROM rundown_tempat ORDER BY nama_tempat 
                         </tr>
                     </thead>
                     <tbody>
-                        <?php if (empty($items_kegiatan)): ?>
+                        <?php if (empty($items_peminjaman)): ?>
                             <tr>
                                 <td colspan="3" style="text-align:center; color:#555; padding: 40px;">
-                                    Belum ada data di kegiatan.
+                                    Belum ada data di inventaris.
                                 </td>
                             </tr>
                         <?php else: ?>
-                            <?php foreach ($items_kegiatan as $idx => $item): ?>
+                            <?php foreach ($items_peminjaman as $idx => $item): ?>
                                 <tr>
                                     <td><?php echo $idx + 1; ?></td>
                                     <td class="item-name" style="color: #ccc;"><?php echo htmlspecialchars($item['nama_tempat']); ?></td>
@@ -421,7 +421,7 @@ $items_kegiatan = dbFetchAll("SELECT * FROM rundown_tempat ORDER BY nama_tempat 
                                             <?php echo csrfField(); ?>
                                             <input type="hidden" name="action" value="copy">
                                             <input type="hidden" name="nama_tempat" value="<?php echo htmlspecialchars($item['nama_tempat']); ?>">
-                                            <button type="submit" class="btn-icon copy" title="Salin ke Inventaris Tempat">
+                                            <button type="submit" class="btn-icon copy" title="Salin ke Master Kegiatan">
                                                 <i class="fas fa-share"></i>
                                             </button>
                                         </form>
@@ -440,7 +440,7 @@ $items_kegiatan = dbFetchAll("SELECT * FROM rundown_tempat ORDER BY nama_tempat 
 <div id="modalMb" class="modal-mb">
     <div class="modal-content-mb">
         <div class="modal-header-mb">
-            <h3 id="modalTitle">Tambah Tempat</h3>
+            <h3 id="modalTitle">Tambah Tempat Kegiatan</h3>
             <button class="modal-close" onclick="closeModal()">&times;</button>
         </div>
         <form method="POST">
@@ -448,8 +448,8 @@ $items_kegiatan = dbFetchAll("SELECT * FROM rundown_tempat ORDER BY nama_tempat 
             <input type="hidden" name="action" id="modalAction" value="add">
             <input type="hidden" name="id" id="modalId" value="">
             <div class="modal-body-mb">
-                <label style="color:#777; font-size:0.8rem; margin-bottom:8px; display:block;">NAMA TEMPAT</label>
-                <input type="text" name="nama_tempat" id="modalInput" required placeholder="Contoh: Aula Wisata Intelektual" autofocus>
+                <label style="color:#777; font-size:0.8rem; margin-bottom:8px; display:block;">NAMA TEMPAT KEGIATAN</label>
+                <input type="text" name="nama_tempat" id="modalInput" required placeholder="Contoh: Gedung Serbaguna" autofocus>
             </div>
             <div style="text-align:right;">
                 <button type="button" class="btn-outline" onclick="closeModal()" style="margin-right:10px; background:none; border:1px solid #444; color:#777; padding:8px 16px; border-radius:8px; cursor:pointer;">Batal</button>
@@ -468,12 +468,12 @@ function openModal(mode, id = null, name = '') {
     const idField = document.getElementById('modalId');
     
     if (mode === 'add') {
-        title.innerText = 'Tambah Tempat Baru';
+        title.innerText = 'Tambah Tempat Kegiatan';
         action.value = 'add';
         input.value = '';
         idField.value = '';
     } else {
-        title.innerText = 'Edit Tempat';
+        title.innerText = 'Edit Tempat Kegiatan';
         action.value = 'edit';
         input.value = name;
         idField.value = id;

@@ -83,6 +83,9 @@ $panitia_sekretaris_list = array_filter($list_panitia_all, fn($p) => $p['jabatan
 // Ambil data lampiran internal (Peminjaman Barang)
 $lampiran_internal_list = dbFetchAll("SELECT id, nama_acara, tanggal_kegiatan, tahun FROM lampiran_pinjam WHERE periode_id = ? ORDER BY created_at DESC", [$periode_id], "i");
 
+// Ambil data arsip rundown (Susunan Acara)
+$rundown_internal_list = dbFetchAll("SELECT id, nama_acara, tanggal_mulai, durasi_hari, tahun FROM arsip_rundown WHERE periode_id = ? ORDER BY created_at DESC", [$periode_id], "i");
+
 // Proses Simpan / Update
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrfVerify()) {
@@ -173,6 +176,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // --- HANDLER LAMPIRAN INTERNAL (JSON DATA) ---
         $lampiran_internal_ids = $_POST['lampiran_internal'] ?? [];
         $konten_data['lampiran_internal_ids'] = $lampiran_internal_ids;
+        
+        // --- HANDLER RUNDOWN INTERNAL (JSON DATA) ---
+        $rundown_internal_ids = $_POST['rundown_internal'] ?? [];
+        $konten_data['rundown_internal_ids'] = $rundown_internal_ids;
+        
         $konten_data['lampiran_files'] = $lampiran_files;
         $konten_json = json_encode($konten_data);
         
@@ -939,6 +947,28 @@ if ($is_edit || $is_clone) {
                                 <div style="font-size: 0.75rem; color: #888;"><?php echo htmlspecialchars($li['tanggal_kegiatan']); ?> <?php echo htmlspecialchars($li['tahun']); ?></div>
                             </div>
                             <i class="fas fa-database" style="color: #555;"></i>
+                        </label>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+
+                <!-- PILIH DARI ARSIP RUNDOWN -->
+                <?php if (!empty($rundown_internal_list)): ?>
+                <div style="margin-bottom:25px; padding-bottom:15px; border-bottom:1px solid var(--border-color);">
+                    <div style="font-size: 0.85rem; color: #9b59b6; margin-bottom: 12px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">Pilih Dari Arsip Rundown:</div>
+                    <div style="max-height: 200px; overflow-y: auto; display: grid; grid-template-columns: 1fr; gap: 8px;">
+                        <?php foreach($rundown_internal_list as $ri): 
+                            $isSelectedRundown = in_array($ri['id'], ($konten['rundown_internal_ids'] ?? []));
+                            $durasi_text = (int)$ri['durasi_hari'] > 1 ? (int)$ri['durasi_hari'] . ' Hari' : '1 Hari';
+                        ?>
+                        <label style="display: flex; align-items: center; gap: 12px; background: rgba(155, 89, 182, 0.05); padding: 12px; border-radius: 12px; cursor: pointer; transition: 0.3s; border: 1px solid transparent;" onmouseover="this.style.borderColor='#9b59b6'" onmouseout="this.style.borderColor='transparent'">
+                            <input type="checkbox" name="rundown_internal[]" value="<?php echo $ri['id']; ?>" <?php echo $isSelectedRundown ? 'checked' : ''; ?> style="width:18px; height:18px; accent-color: #9b59b6;">
+                            <div style="flex-grow:1;">
+                                <div style="font-weight: 600; font-size: 0.95rem;"><?php echo htmlspecialchars($ri['nama_acara']); ?></div>
+                                <div style="font-size: 0.75rem; color: #888;"><?php echo htmlspecialchars($ri['tanggal_mulai']); ?> · <?php echo $durasi_text; ?> · <?php echo htmlspecialchars($ri['tahun']); ?></div>
+                            </div>
+                            <i class="fas fa-clipboard-list" style="color: #9b59b6; opacity: 0.5;"></i>
                         </label>
                         <?php endforeach; ?>
                     </div>

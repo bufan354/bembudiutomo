@@ -30,13 +30,21 @@ foreach ($qtys as $id => $qty) {
         
         if (strpos($id, 'b_') === 0) {
             // Ini adalah barang
+            $real_id = (int)str_replace('b_', '', $id);
             $satuan = 'pcs';
             $nama = $nama_asli;
             
-            // Ekstrak satuan yang berada di dalam kurung di akhir nama
+            // Extract original name and unit from POST string as fallback
             if (preg_match('/(.*)\s+\(([^)]+)\)$/', $nama_asli, $matches)) {
                 $nama = trim($matches[1]);
                 $satuan = trim($matches[2]);
+            }
+
+            // Get LATEST name and unit from DB
+            $master = dbFetchOne("SELECT nama_barang, satuan FROM barang_master WHERE id = ?", [$real_id], "i");
+            if ($master) {
+                $nama = $master['nama_barang'];
+                $satuan = $master['satuan'];
             }
             
             $list_barang[] = [
@@ -46,11 +54,20 @@ foreach ($qtys as $id => $qty) {
             ];
         } else if (strpos($id, 't_') === 0) {
             // Ini adalah tempat
+            $real_id = (int)str_replace('t_', '', $id);
+            $nama = $nama_asli;
+
+            // Get LATEST name from DB
+            $master = dbFetchOne("SELECT nama_tempat FROM tempat_master WHERE id = ?", [$real_id], "i");
+            if ($master) {
+                $nama = $master['nama_tempat'];
+            }
+
             $list_tempat[] = [
-                'nama' => $nama_asli
+                'nama' => $nama
             ];
         } else {
-            // Fallback
+            // Fallback for malformed IDs
             $satuan = 'pcs';
             $nama = $nama_asli;
             if (preg_match('/(.*)\s+\(([^)]+)\)$/', $nama_asli, $matches)) {
@@ -206,7 +223,7 @@ $download_name = "LAMPIRAN PINJAM BARANG - $acara - $tahun";
                         <tr>
                             <td class="center"><?php echo $idx + 1; ?>.</td>
                             <td><?php echo htmlspecialchars($item['nama']); ?></td>
-                            <td class="center"><?php echo $item['qty'] . ' (' . htmlspecialchars($item['satuan']) . ')'; ?></td>
+                            <td><?php echo $item['qty'] . ' (' . htmlspecialchars($item['satuan']) . ')'; ?></td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>

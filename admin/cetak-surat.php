@@ -52,6 +52,14 @@ if (!empty($konten['lampiran_internal_ids'])) {
     $internal_data = dbFetchAll("SELECT * FROM lampiran_pinjam WHERE id IN ($placeholders) AND periode_id = ?", array_merge($ids, [$periode_id]));
 }
 
+// Ambil Data Rundown Internal (Susunan Acara) jika ada
+$rundown_data = [];
+if (!empty($konten['rundown_internal_ids'])) {
+    $r_ids = (array)$konten['rundown_internal_ids'];
+    $r_placeholders = implode(',', array_fill(0, count($r_ids), '?'));
+    $rundown_data = dbFetchAll("SELECT * FROM arsip_rundown WHERE id IN ($r_placeholders) AND periode_id = ?", array_merge($r_ids, [$periode_id]));
+}
+
 // Generate Dynamic Filename
 $f_perihal = strtoupper($surat['perihal']);
 $parts = explode('/', $surat['nomor_surat']);
@@ -216,6 +224,9 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
             * { 
                 box-shadow: none !important; 
                 outline: none !important; 
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
             }
             img { 
                 border-style: none !important; 
@@ -305,7 +316,8 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                     <?php 
                     $cnt_pdf = !empty($konten['lampiran_files']) ? count($konten['lampiran_files']) : 0;
                     $cnt_int = !empty($konten['lampiran_internal_ids']) ? count($konten['lampiran_internal_ids']) : 0;
-                    $jml_lampiran = $cnt_pdf + $cnt_int;
+                    $cnt_rundown = !empty($konten['rundown_internal_ids']) ? count($konten['rundown_internal_ids']) : 0;
+                    $jml_lampiran = $cnt_pdf + $cnt_int + $cnt_rundown;
                     echo $jml_lampiran > 0 ? $jml_lampiran : '-';
                     ?>
                 </td>
@@ -541,17 +553,36 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                     $nama_asli = $b['nama'] ?? 'Tidak dikenal';
                     
                     if (strpos($id, 'b_') === 0) {
+                        $real_id = (int)str_replace('b_', '', $id);
                         $satuan = 'pcs';
                         $nama = $nama_asli;
+                        
+                        // Extract original name and unit from archived string as fallback
                         if (preg_match('/(.*)\s+\(([^)]+)\)$/', $nama_asli, $matches)) {
                             $nama = trim($matches[1]);
                             $satuan = trim($matches[2]);
                         }
+                        
+                        // Try to get LATEST name and unit from Master
+                        $master = dbFetchOne("SELECT nama_barang, satuan FROM barang_master WHERE id = ?", [$real_id], "i");
+                        if ($master) {
+                            $nama = $master['nama_barang'];
+                            $satuan = $master['satuan'];
+                        }
+
                         $list_barang[] = ['nama' => $nama, 'qty' => $qty, 'satuan' => $satuan];
                     } else if (strpos($id, 't_') === 0) {
-                        $list_tempat[] = ['nama' => $nama_asli];
+                        $real_id = (int)str_replace('t_', '', $id);
+                        $nama = $nama_asli;
+                        
+                        // Try to get LATEST name from Master
+                        $master = dbFetchOne("SELECT nama_tempat FROM tempat_master WHERE id = ?", [$real_id], "i");
+                        if ($master) {
+                            $nama = $master['nama_tempat'];
+                        }
+                        $list_tempat[] = ['nama' => $nama];
                     } else {
-                        // fallback
+                        // fallback for old/malformed data
                         $satuan = 'pcs';
                         $nama = $nama_asli;
                         if (preg_match('/(.*)\s+\(([^)]+)\)$/', $nama_asli, $matches)) {
@@ -571,7 +602,7 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                         <tr style="background: #f5f5f5;">
                             <th style="border: 1px solid #000; padding: 8px; text-align: center; width: 50px;">No.</th>
                             <th style="border: 1px solid #000; padding: 8px; text-align: left;">Nama Barang</th>
-                            <th style="border: 1px solid #000; padding: 8px; text-align: center; width: 100px;">Jumlah</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: left; width: 100px;">Jumlah</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -579,7 +610,7 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                         <tr>
                             <td style="border: 1px solid #000; padding: 8px; text-align: center;"><?php echo $b_idx + 1; ?>.</td>
                             <td style="border: 1px solid #000; padding: 8px;"><?php echo htmlspecialchars($item['nama']); ?></td>
-                            <td style="border: 1px solid #000; padding: 8px; text-align: center;"><?php echo $item['qty'] . ' (' . htmlspecialchars($item['satuan']) . ')'; ?></td>
+                            <td style="border: 1px solid #000; padding: 8px; text-align: left;"><?php echo $item['qty'] . ' (' . htmlspecialchars($item['satuan']) . ')'; ?></td>
                         </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -612,6 +643,134 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
             <p style="font-size: 11pt; margin-top: 20px;">Demikian daftar barang ini kami buat untuk dapat dipergunakan sebagaimana mestinya.</p>
         </div>
         <?php endforeach; ?>
+    <?php endif; ?>
+
+    <!-- RENDER RUNDOWN INTERNAL (DATA DARI DATABASE) -->
+    <?php if (!empty($rundown_data)): ?>
+        <?php 
+        $bulan_id_r = [
+            'January' => 'Januari', 'February' => 'Februari', 'March' => 'Maret',
+            'April' => 'April', 'May' => 'Mei', 'June' => 'Juni', 'July' => 'Juli',
+            'August' => 'Agustus', 'September' => 'September', 'October' => 'Oktober',
+            'November' => 'November', 'December' => 'Desember'
+        ];
+        $hari_id_r = [
+            'Sunday' => 'Minggu', 'Monday' => 'Senin', 'Tuesday' => 'Selasa',
+            'Wednesday' => 'Rabu', 'Thursday' => 'Kamis', 'Friday' => 'Jum\'at', 'Saturday' => 'Sabtu'
+        ];
+        
+        $lampiran_offset = count($internal_data);
+        foreach($rundown_data as $idx_rd => $data_rd):
+            $rd_nama = $data_rd['nama_acara'];
+            $rd_tahun = $data_rd['tahun'];
+            $rd_tanggal_mulai = $data_rd['tanggal_mulai'];
+            $rd_durasi = (int)$data_rd['durasi_hari'];
+            $rd_json = json_decode($data_rd['rundown_json'], true) ?: [];
+            
+            $start_ts_r = strtotime($rd_tanggal_mulai);
+            $end_ts_r = strtotime($rd_tanggal_mulai . " + " . ($rd_durasi - 1) . " days");
+            
+            // Build tanggal utama string
+            $s_d = date('d', $start_ts_r);
+            $s_m = $bulan_id_r[date('F', $start_ts_r)] ?? date('F', $start_ts_r);
+            $s_y = date('Y', $start_ts_r);
+            
+            if ($rd_durasi > 1) {
+                $e_d = date('d', $end_ts_r);
+                $e_m = $bulan_id_r[date('F', $end_ts_r)] ?? date('F', $end_ts_r);
+                $e_y = date('Y', $end_ts_r);
+                if ($s_y !== $e_y) {
+                    $tanggal_utama_r = "$s_d $s_m $s_y - $e_d $e_m $e_y";
+                } elseif ($s_m !== $e_m) {
+                    $tanggal_utama_r = "$s_d $s_m - $e_d $e_m $s_y";
+                } else {
+                    $tanggal_utama_r = "$s_d - $e_d $s_m $s_y";
+                }
+            } else {
+                $tanggal_utama_r = "$s_d $s_m $s_y";
+            }
+            
+            $total_days_r = count($rd_json);
+
+            foreach($rd_json as $dayIdx => $dayData):
+                $day_ts = strtotime($rd_tanggal_mulai . " + $dayIdx days");
+                $hari_nama = $hari_id_r[date('l', $day_ts)] ?? date('l', $day_ts);
+                $tgl_d = date('d', $day_ts);
+                $tgl_m = $bulan_id_r[date('F', $day_ts)] ?? date('F', $day_ts);
+                $tgl_y = date('Y', $day_ts);
+                
+                if ($total_days_r === 1) {
+                    $judul_hari = strtoupper($rd_nama);
+                } else {
+                    $judul_hari = strtoupper($rd_nama) . ' - HARI KE-' . ($dayIdx + 1);
+                }
+                
+                $items = $dayData['items'] ?? [];
+                // Skip if no items to avoid "nanggung" tables
+                if (empty($items)) continue;
+        ?>
+        <div class="page" style="margin-top: 10mm; page-break-before: always; position: relative;">
+            <?php if ($dayIdx === 0): ?>
+                <div style="text-align: left; font-size: 12pt; margin-bottom: 20px; font-style: italic;">Lampiran <?php echo ($lampiran_offset + $idx_rd + 1); ?></div>
+                
+                <div style="text-align: center; margin-bottom: 30px; text-transform: uppercase;">
+                    <h1 style="font-size: 14pt; font-weight: bold; margin: 3px 0; line-height: 1.5;">
+                        SUSUNAN ACARA <?php echo htmlspecialchars(strtoupper($rd_nama)); ?> PERIODE <?php echo htmlspecialchars($rd_tahun); ?>
+                    </h1>
+                    <p style="font-weight: bold; margin-top: 5px; font-size: 12pt; text-transform: uppercase;"><?php echo htmlspecialchars($tanggal_utama_r); ?></p>
+                </div>
+            <?php else: ?>
+                <div style="height: 30px;"></div>
+            <?php endif; ?>
+
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; page-break-inside: auto;">
+                <thead>
+                    <tr>
+                        <th colspan="5" style="background-color: #d9e2f3; font-weight: bold; font-size: 12pt; padding: 10px; border: 1px solid #000; text-align: center; -webkit-print-color-adjust: exact;">
+                            <?php echo htmlspecialchars($judul_hari); ?><br><br>
+                            <?php echo htmlspecialchars("$hari_nama, $tgl_d $tgl_m $tgl_y"); ?>
+                        </th>
+                    </tr>
+                    <tr>
+                        <th style="background-color: #bfbfbf; font-weight: bold; border: 1px solid #000; padding: 8px 12px; text-align: center; width: 5%; -webkit-print-color-adjust: exact;">NO</th>
+                        <th style="background-color: #bfbfbf; font-weight: bold; border: 1px solid #000; padding: 8px 12px; text-align: center; width: 15%; -webkit-print-color-adjust: exact;">WAKTU</th>
+                        <th style="background-color: #bfbfbf; font-weight: bold; border: 1px solid #000; padding: 8px 12px; text-align: center; width: 30%; -webkit-print-color-adjust: exact;">ACARA</th>
+                        <th style="background-color: #bfbfbf; font-weight: bold; border: 1px solid #000; padding: 8px 12px; text-align: center; width: 35%; -webkit-print-color-adjust: exact;">TEMPAT / KETERANGAN</th>
+                        <th style="background-color: #bfbfbf; font-weight: bold; border: 1px solid #000; padding: 8px 12px; text-align: center; width: 15%; -webkit-print-color-adjust: exact;">PENANGGUNG<br>JAWAB</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php 
+                    $num = 1;
+                    for ($idx = 0; $idx < count($items); $idx++): 
+                        $item = $items[$idx];
+                        $is_par = !empty($item['is_parallel']);
+                        
+                        $rowspan = 1;
+                        if (!$is_par) {
+                            for ($j = $idx + 1; $j < count($items); $j++) {
+                                if (!empty($items[$j]['is_parallel'])) {
+                                    $rowspan++;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    ?>
+                        <tr style="page-break-inside: avoid;">
+                            <?php if (!$is_par): ?>
+                                <td style="border: 1px solid #000; padding: 8px 12px; text-align: center; vertical-align: middle;" <?php echo $rowspan > 1 ? 'rowspan="'.$rowspan.'"' : ''; ?>><?php echo $num++; ?>.</td>
+                                <td style="border: 1px solid #000; padding: 8px 12px; text-align: center; vertical-align: middle;" <?php echo $rowspan > 1 ? 'rowspan="'.$rowspan.'"' : ''; ?>><?php echo htmlspecialchars($item['waktu']); ?></td>
+                            <?php endif; ?>
+                            <td style="border: 1px solid #000; padding: 8px 12px; text-align: center; vertical-align: middle;"><?php echo htmlspecialchars($item['acara']); ?></td>
+                            <td style="border: 1px solid #000; padding: 8px 12px; text-align: center; vertical-align: middle;"><?php echo htmlspecialchars($item['keterangan']); ?></td>
+                            <td style="border: 1px solid #000; padding: 8px 12px; text-align: center; vertical-align: middle;"><?php echo htmlspecialchars($item['pj']); ?></td>
+                        </tr>
+                    <?php endfor; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php endforeach; endforeach; ?>
     <?php endif; ?>
     
     <!-- Container untuk render Lampiran PDF (EXTERNAL) -->
