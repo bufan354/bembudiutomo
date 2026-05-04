@@ -285,7 +285,7 @@ $download_name = "RUNDOWN - $nama_acara - $tahun";
                     <tr>
                         <?php if (!$is_parallel): ?>
                             <td <?php echo $rowspan > 1 ? 'rowspan="'.$rowspan.'"' : ''; ?>><?php echo $num++; ?>.</td>
-                            <td <?php echo $rowspan > 1 ? 'rowspan="'.$rowspan.'"' : ''; ?>><?php echo htmlspecialchars($item['waktu']); ?></td>
+                            <td style="white-space: nowrap;" <?php echo $rowspan > 1 ? 'rowspan="'.$rowspan.'"' : ''; ?>><?php echo htmlspecialchars($item['waktu']); ?></td>
                         <?php endif; ?>
                         <td><?php echo nl2br(htmlspecialchars($item['acara'])); ?></td>
                         <td><?php echo htmlspecialchars($item['keterangan']); ?></td>

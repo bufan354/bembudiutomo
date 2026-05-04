@@ -760,7 +760,7 @@ $download_name = "SURAT $f_perihal $f_kode UNTUK $f_tujuan $f_tahun";
                         <tr style="page-break-inside: avoid;">
                             <?php if (!$is_par): ?>
                                 <td style="border: 1px solid #000; padding: 8px 12px; text-align: center; vertical-align: middle;" <?php echo $rowspan > 1 ? 'rowspan="'.$rowspan.'"' : ''; ?>><?php echo $num++; ?>.</td>
-                                <td style="border: 1px solid #000; padding: 8px 12px; text-align: center; vertical-align: middle;" <?php echo $rowspan > 1 ? 'rowspan="'.$rowspan.'"' : ''; ?>><?php echo htmlspecialchars($item['waktu']); ?></td>
+                                <td style="border: 1px solid #000; padding: 8px 12px; text-align: center; vertical-align: middle; white-space: nowrap;" <?php echo $rowspan > 1 ? 'rowspan="'.$rowspan.'"' : ''; ?>><?php echo htmlspecialchars($item['waktu']); ?></td>
                             <?php endif; ?>
                             <td style="border: 1px solid #000; padding: 8px 12px; text-align: center; vertical-align: middle;"><?php echo htmlspecialchars($item['acara']); ?></td>
                             <td style="border: 1px solid #000; padding: 8px 12px; text-align: center; vertical-align: middle;"><?php echo htmlspecialchars($item['keterangan']); ?></td>
