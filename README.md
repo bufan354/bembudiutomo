@@ -1,59 +1,59 @@
-# Sistem Arsip & Administrasi BEM
+# 🏛️ Sistem Manajemen BEM (Astawidya)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PHP Version](https://img.shields.io/badge/PHP-7.4%2B-blue.svg)](https://www.php.net/)
+[![Database](https://img.shields.io/badge/Database-MySQL%20%7C%20PostgreSQL-orange.svg)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Sistem informasi berbasis web untuk pengelolaan administrasi, pengarsipan surat, manajemen rundown acara, dan sinkronisasi logistik organisasi Badan Eksekutif Mahasiswa.
+Sistem informasi manajemen organisasi Badan Eksekutif Mahasiswa (BEM) yang dirancang untuk mengotomatisasi administrasi surat-menyurat, pengarsipan rundown acara, serta sinkronisasi logistik inventaris secara cerdas dan responsif.
 
-## 🚀 Fitur Utama
-- **Pembuatan Surat & Lampiran Otomatis**: Generate surat formal dan lampiran logistik dalam format PDF/Cetak dengan tata letak standar organisasi.
-- **Manajemen Rundown Acara**: Modul pembuatan susunan acara dinamis dengan fitur kalkulasi waktu otomatis, dukungan kegiatan paralel, dan *auto-pagination* saat cetak PDF.
-- **Dynamic Inventory Sync**: Integrasi real-time antara data master barang/tempat dengan modul cetak, memastikan satuan dan nama barang selalu akurat tanpa input manual berulang.
-- **Mobile Responsive Layout**: Antarmuka dashboard dan manajemen arsip yang dioptimalkan sepenuhnya untuk perangkat seluler (Mobile-First Design).
-- **Hybrid Database Support**: Berjalan lancar di MySQL (Hosting/InfinityFree) maupun PostgreSQL (Lokal/Supabase).
-- **Manajemen Arsip Terpusat**: Pencatatan surat masuk, keluar, rundown, dan lampiran secara sistematis dengan fitur duplikasi data.
-- **Keamanan & Log**: Dilengkapi dengan CSRF Protection, Audit Logging, dan manajemen periode kepengurusan.
+---
+
+## ✨ Fitur Unggulan
+
+- **📂 Arsip Digital Cerdas**: Pengelolaan surat masuk, surat keluar, dan lampiran secara sistematis dengan sistem penomoran otomatis.
+- **⏱️ Rundown Generator**: Pembuatan susunan acara dinamis dengan kalkulasi waktu otomatis (Durasi Jam & Menit) serta dukungan multi-hari.
+- **📦 Inventory Sync**: Sinkronisasi data master barang dan tempat secara real-time ke dalam dokumen cetak (PDF).
+- **📱 Premium Responsive UI**: Antarmuka dashboard modern yang dioptimalkan untuk perangkat mobile (Dark Mode Support & Glassmorphism Design).
+- **🔗 Hybrid Database**: Mendukung arsitektur database ganda (MySQL & PostgreSQL) untuk fleksibilitas deployment.
+- **🛡️ Security First**: Dilengkapi CSRF Protection, Password Hashing, Audit Logging, dan Session Management.
+
+---
 
 ## 🛠️ Persyaratan Sistem
-- PHP 7.4 atau lebih baru (Direkomendasikan PHP 8.x)
-- Database: MySQL atau PostgreSQL
-- Web Server: Apache atau Nginx
 
-## 📥 Cara Instalasi
+- **Server**: Apache / Nginx
+- **Bahasa**: PHP 7.4 / 8.x
+- **Database**: MySQL 5.7+ atau PostgreSQL 12+
+- **Ekstensi PHP**: `pdo`, `gd`, `mbstring`, `openssl`
 
-### 1. Download/Clone
-Buka terminal dan jalankan perintah:
-```bash
-git clone https://github.com/bufan354/bembudiutomo.git
-cd bembudiutomo
-```
+---
 
-### 2. Konfigurasi Lingkungan
-Ubah nama file `.env.example` menjadi `.env`, lalu sesuaikan kredensial database Anda:
+## 🚀 Instalasi Cepat
 
-- **Untuk Lokal (PostgreSQL/Supabase)**: Salin isi dari `.env.example.pgsql` ke `.env`.
-- **Untuk Hosting (MySQL/InfinityFree)**: Salin isi dari `.env.example.mysql` ke `.env`.
+Untuk panduan instalasi mendalam dan konfigurasi teknis, silakan merujuk pada:
 
-### 3. Setup Folder Upload
-Sistem akan otomatis membuat folder `uploads/` dan sub-foldernya saat pertama kali dijalankan. Pastikan web server memiliki izin untuk menulis (Write Permission) di folder root.
+### 📖 [**PANDUAN INSTALASI LENGKAP (INSTALL.md)**](INSTALL.md)
 
-## ⚙️ Konfigurasi File Penting
-- `.env`: File utama untuk pengaturan database dan URL.
-- `config/database.php`: Logika koneksi database hybrid.
-- `includes/functions.php`: Fungsi pembantu sistem dan keamanan.
-- `admin/cetak-surat.php`: Template tata letak surat (Kop, TTD, Margin).
-- `admin/cetak-rundown.php`: Logika manajemen susunan acara responsif.
+**Ringkasan Cepat:**
+1. Clone repository ini.
+2. Salin `.env.example.mysql` atau `.env.example.pgsql` menjadi `.env`.
+3. Impor skema database dari folder `databases/`.
+4. Sesuaikan kredensial di file `.env`.
+5. Login dengan user `superadmin` / `admin1234`.
 
-## 🚀 Deploy 
-1. Unggah seluruh file (kecuali file yang ada di `.gitignore`) ke folder `htdocs`.
-2. Buat database MySQL atau postgresSQL.
-3. Import skema database Anda ke phpMyAdmin/mariaDB.
-4. Sesuaikan file `.env` di server dengan data MySQL dari InfinityFree.
-5. Selesai!
+---
 
-## 📄 Kontribusi
-Dikembangkan oleh Bufan Fadhilah.
+## 🏗️ Struktur Proyek
 
-## ⚖️ Lisensi
-Proyek ini dilisensikan di bawah **MIT License**. Silakan lihat file `LICENSE` untuk informasi lebih lanjut.
+- `/admin`: Panel kontrol administrasi dan manajemen data.
+- `/config`: File konfigurasi database dan environment.
+- `/databases`: Skema database SQL (MySQL & PostgreSQL).
+- `/includes`: Fungsi inti, keamanan, dan logika aplikasi.
+- `/uploads`: Lokasi penyimpanan file media dan dokumen (otomatis dibuat).
 
+---
+
+## 📄 Lisensi
+Proyek ini dilisensikan di bawah **MIT License**.
+
+**Dikembangkan dengan ❤️ untuk kemajuan organisasi mahasiswa.**
